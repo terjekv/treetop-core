@@ -133,15 +133,22 @@ permit (
 );
 "#;
     #[parameterized(
-        alice_edit_allow = { "alice", "edit", Photo { id: "VacationPhoto94.jpg".into() }, Allow },
-        alice_view_allow = { "alice", "view", Photo { id: "VacationPhoto94.jpg".into() }, Allow },
-        alice_delete_allow = { "alice", "delete", Photo { id: "VacationPhoto94.jpg".into() }, Allow },
-        bob_view_allow = { "bob", "view", Photo { id: "VacationPhoto94.jpg".into() }, Allow },
-        bob_edit_deny = { "bob", "edit", Photo { id: "VacationPhoto94.jpg".into() }, Deny },
-        charlie_view_deny = { "charlie", "view", Photo { id: "VacationPhoto94.jpg".into() }, Deny },
+        alice_edit_allow = { "alice", "edit", "VacationPhoto94.jpg", Allow },
+        alice_view_allow = { "alice", "view", "VacationPhoto94.jpg", Allow },
+        alice_delete_allow = { "alice", "delete", "VacationPhoto94.jpg", Allow },
+        alice_view_deny_wrong_photo = { "alice", "view", "wrongphoto.jpg", Deny },
+        bob_view_allow = { "bob", "view", "VacationPhoto94.jpg", Allow },
+        bob_edit_deny = { "bob", "edit", "VacationPhoto94.jpg", Deny },
+        bob_view_deny_wrong_photo = { "bob", "edit", "wrongphoto.jpg", Deny },
+        charlie_view_deny = { "charlie", "view", "VacationPhoto94.jpg", Deny },
     )]
-    fn test_evaluate_requests(user: &str, action: &str, resource: Resource, expected: Decision) {
+    fn test_evaluate_requests(user: &str, action: &str, resource: &str, expected: Decision) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
+
+        // Convert the resource to the appropriate type
+        let resource = Resource::Photo {
+            id: resource.to_string(),
+        };
 
         let request = Request {
             principal: user.into(),
