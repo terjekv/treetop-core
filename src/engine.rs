@@ -33,7 +33,7 @@ impl PolicyEngine {
     }
 
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
-        println!("Evaluating request: {:?}", request);
+        println!("Evaluating request: {request:?}");
         // 1. Turn your Atom types into EntityUids (the “P, A, R” in PARC)
         let principal: EntityUid = request.principal.cedar_entity_uid()?;
         let action: EntityUid = request.action.cedar_entity_uid()?;
@@ -42,10 +42,10 @@ impl PolicyEngine {
         // 2. Build an Context from the resource, this may be empty.
         let context = request.resource.cedar_ctx()?;
 
-        println!("Principal: {:?}", principal);
-        println!("Action: {:?}", action);
-        println!("Resource: {:?}", resource);
-        println!("Context: {:?}", context);
+        println!("Principal: {principal:?}");
+        println!("Action: {action:?}");
+        println!("Resource: {resource:?}");
+        println!("Context: {context:?}");
 
         // 3. Create the Cedar request
         let cedar_req = CedarRequest::new(principal, action, resource, context, None)?;
@@ -54,22 +54,22 @@ impl PolicyEngine {
         let entities = Entities::empty();
         let entities = entities.add_entities(vec![request.resource.cedar_entity()?], None)?;
 
-        println!("Entities: {:?}", entities);
+        println!("Entities: {entities:?}");
 
         // 5. Run the authorizer
         let guard = self.inner.read()?;
         let result = Authorizer::new().is_authorized(&cedar_req, &guard, &entities);
 
-        println!("Result: {:?}", result);
+        println!("Result: {result:?}");
 
         if result.decision() == cedar_policy::Decision::Allow {
             let reasons = result.diagnostics().reason();
             for reason in reasons {
                 let policy = guard.policy(reason);
                 if let Some(policy) = policy {
-                    println!("Policy {}: {}", reason, policy);
+                    println!("Policy {reason}: {policy}");
                 } else {
-                    println!("No policy found for reason: {}", reason);
+                    println!("No policy found for reason: {reason}");
                 }
             }
         }
@@ -87,7 +87,7 @@ impl PolicyEngine {
 
         // Join the user and then scope into a ::-separated string
         let user_with_scope = if scope.is_empty() {
-            format!("User::\"{}\"", user)
+            format!("User::\"{user}\"")
         } else {
             format!("User::\"{}\"::{}", scope.join("::"), user)
         };

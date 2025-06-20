@@ -5,7 +5,7 @@ use std::str::FromStr;
 use itertools::Itertools;
 
 use cedar_policy::{
-    ActionConstraint, Context, EntityUid, Policy, PolicyToJsonError, RestrictedExpression,
+    ActionConstraint, Context, EntityUid, Policy, RestrictedExpression,
 };
 
 use serde::ser::SerializeStruct;
@@ -51,10 +51,10 @@ impl CedarAtom for Resource {
     fn cedar_entity_uid(&self) -> Result<cedar_policy::EntityUid, PolicyError> {
         let literal = match self {
             Resource::Photo { id } => {
-                format!(r#"Photo::"{}""#, id)
+                format!(r#"Photo::"{id}""#)
             }
             Resource::Host { name, .. } => {
-                format!(r#"Host::"{}""#, name)
+                format!(r#"Host::"{name}""#)
             }
         };
         cedar_policy::EntityUid::from_str(&literal)
@@ -262,7 +262,7 @@ impl Serialize for UserPolicies {
         for policy in policies {
             let json = match policy.to_json() {
                 Ok(json) => json,
-                Err(e) => return Err(serde::ser::Error::custom(PolicyToJsonError::from(e))),
+                Err(e) => return Err(serde::ser::Error::custom(e)),
             };
             policies_as_json.push(json);
         }
