@@ -128,6 +128,18 @@ impl CedarAtom for User {
     }
 }
 
+impl<T> From<T> for User
+where
+    T: Into<String>,
+{
+    fn from(v: T) -> Self {
+        User {
+            scope: None,
+            id: v.into(),
+        }
+    }
+}
+
 /// An action, possibly scoped (e.g. Action::Infra::"delete_vm").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Action {
@@ -142,6 +154,18 @@ impl CedarAtom for Action {
 
     fn cedar_id(&self) -> &str {
         &self.id
+    }
+}
+
+impl<T> From<T> for Action
+where
+    T: Into<String>,
+{
+    fn from(v: T) -> Self {
+        Action {
+            scope: None,
+            id: v.into(),
+        }
     }
 }
 

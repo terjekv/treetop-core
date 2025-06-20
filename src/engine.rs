@@ -115,7 +115,7 @@ impl PolicyEngine {
 mod tests {
     use super::*;
     use crate::models::{
-        Action, Decision::Allow, Decision::Deny, Resource, Resource::Host, Resource::Photo, User,
+        Decision::Allow, Decision::Deny, Resource, Resource::Host, Resource::Photo,
     };
     use yare::parameterized;
 
@@ -144,14 +144,8 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
 
         let request = Request {
-            principal: User {
-                scope: None,
-                id: user.into(),
-            },
-            action: Action {
-                scope: None,
-                id: action.into(),
-            },
+            principal: user.into(),
+            action: action.into(),
             groups: vec![],
             resource,
         };
@@ -195,14 +189,8 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_CONTEXT).unwrap();
 
         let request = Request {
-            principal: User {
-                scope: None,
-                id: user.into(),
-            },
-            action: Action {
-                scope: None,
-                id: action.into(),
-            },
+            principal: user.into(),
+            action: action.into(),
             groups: vec![],
             resource: Host {
                 name: host_name.into(),
@@ -224,14 +212,8 @@ permit (
     fn test_reload_policy() {
         let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
         let request = Request {
-            principal: User {
-                scope: None,
-                id: "bob".into(),
-            },
-            action: Action {
-                scope: None,
-                id: "view".into(),
-            },
+            principal: "bob".into(),
+            action: "view".into(),
             groups: vec![],
             resource: Photo {
                 id: "VacationPhoto94.jpg".into(),
