@@ -117,6 +117,7 @@ mod tests {
     use crate::models::{
         Decision::Allow, Decision::Deny, Resource, Resource::Host, Resource::Photo,
     };
+    use serde_json::Value;
     use yare::parameterized;
 
     const TEST_POLICY: &str = r#"
@@ -277,6 +278,32 @@ permit (
         for (i, action) in expected_actions.iter().enumerate() {
             let padded_action = format!("Action::\"{}\"", action);
             assert_eq!(padded_action, actions[i].to_string(),);
+        }
+    }
+
+    #[test]
+    fn test_serialize_user_permissions() {
+        let combined = TEST_PERMISSION_POLICY.to_string() + TEST_POLICY_WITH_CONTEXT;
+        let engine = PolicyEngine::new_from_str(&combined).unwrap();
+        let perms = engine.list_permissions_for_user("alice", vec![]).unwrap();
+
+        let expected_serialized = r#"{"user":"alice","policies":[{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"in","entities":[{"type":"Action","id":"view"},{"type":"Action","id":"edit"},{"type":"Action","id":"delete"}]},"resource":{"op":"==","entity":{"type":"Photo","id":"VacationPhoto94.jpg"}},"conditions":[]},{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"==","entity":{"type":"Action","id":"create_host"}},"resource":{"op":"is","entity_type":"Host"},"conditions":[]},{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"==","entity":{"type":"Action","id":"create_host"}},"resource":{"op":"is","entity_type":"Host"},"conditions":[{"kind":"when","body":{"&&":{"left":{"like":{"left":{".":{"left":{"Var":"resource"},"attr":"name"}},"pattern":[{"Literal":"w"},{"Literal":"e"},{"Literal":"b"},"Wildcard"]}},"right":{"isInRange":[{".":{"left":{"Var":"resource"},"attr":"ip"}},{"ip":[{"Value":"192.0.1.0/24"}]}]}}}}]}]}"#;
+
+        let actual: Value = serde_json::to_value(&perms).unwrap();
+        let expected: Value = serde_json::from_str(expected_serialized).unwrap();
+
+        assert_eq!(actual["user"], expected["user"]);
+
+        let act_arr = actual["policies"].as_array().unwrap();
+        let exp_arr = expected["policies"].as_array().unwrap();
+        assert_eq!(act_arr.len(), exp_arr.len(), "wrong number of policies");
+
+        for exp in exp_arr {
+            assert!(
+                act_arr.iter().any(|act| act == exp),
+                "expected policy not found: {:#}",
+                exp
+            );
         }
     }
 }

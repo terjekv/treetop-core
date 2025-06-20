@@ -4,9 +4,13 @@ use std::str::FromStr;
 
 use itertools::Itertools;
 
-use cedar_policy::{ActionConstraint, Context, EntityUid, Policy, RestrictedExpression};
+use cedar_policy::{
+    ActionConstraint, Context, EntityUid, Policy, PolicyToJsonError, RestrictedExpression,
+};
 
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
+use serde_json::Value;
 
 use crate::error::PolicyError;
 use crate::traits::CedarAtom;
@@ -243,5 +247,29 @@ impl UserPolicies {
             .map(|p| p.to_string())
             .sorted()
             .collect()
+    }
+}
+
+impl Serialize for UserPolicies {
+    fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let policies = self.policies();
+
+        let mut policies_as_json: Vec<Value> = Vec::new();
+
+        for policy in policies {
+            let json = match policy.to_json() {
+                Ok(json) => json,
+                Err(e) => return Err(serde::ser::Error::custom(PolicyToJsonError::from(e))),
+            };
+            policies_as_json.push(json);
+        }
+
+        let mut s = ser.serialize_struct("UserPolicies", 2)?;
+        s.serialize_field("user", &self.user)?;
+        s.serialize_field("policies", &policies_as_json)?;
+        s.end()
     }
 }
