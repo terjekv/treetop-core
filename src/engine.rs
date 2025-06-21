@@ -1,6 +1,6 @@
 use cedar_policy::{
-    Authorizer, Effect::Forbid as CedarForbid, Effect::Permit as CedarPermit, Entities, EntityUid,
-    Policy, PolicySet, PrincipalConstraint, Request as CedarRequest,
+    Authorizer, Entities, EntityUid, Policy, PolicySet, PrincipalConstraint,
+    Request as CedarRequest,
 };
 use std::sync::{Arc, RwLock};
 
@@ -100,11 +100,7 @@ impl PolicyEngine {
             // Check if the policy applies to the user
             let pc = policy.principal_constraint();
             if pc == PrincipalConstraint::Eq(uid.clone()) || pc == PrincipalConstraint::Any {
-                if policy.effect() == CedarPermit {
-                    matching_policies.push(policy.clone());
-                } else if policy.effect() == CedarForbid {
-                    matching_policies.push(policy.clone());
-                }
+                matching_policies.push(policy.clone());
             }
         }
 
