@@ -4,9 +4,7 @@ use std::str::FromStr;
 
 use itertools::Itertools;
 
-use cedar_policy::{
-    ActionConstraint, Context, EntityUid, Policy, RestrictedExpression,
-};
+use cedar_policy::{ActionConstraint, Context, EntityUid, Policy, RestrictedExpression};
 
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};

@@ -1,6 +1,6 @@
 use cedar_policy::{
-    Authorizer, Entities, EntityUid, Policy, PolicySet, PrincipalConstraint,
-    Request as CedarRequest,
+    Authorizer, Effect::Forbid as CedarForbid, Effect::Permit as CedarPermit, Entities, EntityUid,
+    Policy, PolicySet, PrincipalConstraint, Request as CedarRequest,
 };
 use std::sync::{Arc, RwLock};
 
@@ -95,16 +95,17 @@ impl PolicyEngine {
         let uid: EntityUid = user_with_scope.parse()?;
 
         let mut matching_policies: Vec<Policy> = Vec::new();
+
         for policy in policies {
             // Check if the policy applies to the user
-            if policy.principal_constraint() != PrincipalConstraint::Eq(uid.clone()) {
-                continue;
+            let pc = policy.principal_constraint();
+            if pc == PrincipalConstraint::Eq(uid.clone()) || pc == PrincipalConstraint::Any {
+                if policy.effect() == CedarPermit {
+                    matching_policies.push(policy.clone());
+                } else if policy.effect() == CedarForbid {
+                    matching_policies.push(policy.clone());
+                }
             }
-            // Check if the policy is a permit policy
-            if policy.effect() != cedar_policy::Effect::Permit {
-                continue;
-            }
-            matching_policies.push(policy.clone());
         }
 
         Ok(UserPolicies::new(user, &matching_policies))
@@ -133,6 +134,73 @@ permit (
     resource == Photo::"VacationPhoto94.jpg"
 );
 "#;
+
+    const TEST_POLICY_WITHOUT_BOB: &str = r#"
+permit (
+    principal == User::"alice",
+    action in [Action::"view", Action::"edit", Action::"delete"],
+    resource == Photo::"VacationPhoto94.jpg"
+);
+"#;
+
+    const TEST_POLICY_WITH_CONTEXT: &str = r#"
+permit (
+    principal == User::"alice",
+    action == Action::"create_host",
+    resource is Host
+) when {
+    resource.name like "web*" &&
+    resource.ip.isInRange(ip("192.0.1.0/24"))
+};
+
+permit (
+    principal == User::"bob",
+    action == Action::"create_host",
+    resource is Host
+) when {
+    resource.name like "bob*" &&
+    resource.ip.isInRange(ip("192.0.0.0/24"))
+};
+"#;
+
+    const TEST_PERMISSION_POLICY: &str = r#"
+permit (
+    principal == User::"alice",
+    action in [Action::"view", Action::"edit", Action::"delete"],
+    resource == Photo::"VacationPhoto94.jpg"
+);
+
+permit (
+    principal == User::"alice",
+    action == Action::"create_host",
+    resource is Host
+);
+
+permit (
+    principal == User::"bob",
+    action == Action::"view",
+    resource == Photo::"VacationPhoto94.jpg"
+);
+"#;
+
+    const TEST_POLICY_WITH_FORBID: &str = r#"
+permit (
+    principal == User::"alice",
+    action in [Action::"view", Action::"edit", Action::"delete"],
+    resource == Photo::"VacationPhoto94.jpg"
+);
+forbid (
+    principal == User::"alice",
+    action == Action::"edit",
+    resource == Photo::"VacationPhoto94.jpg"
+);
+forbid (
+    principal,
+    action == Action::"delete",
+    resource == Photo::"VacationPhoto94.jpg"
+);
+"#;
+
     #[parameterized(
         alice_edit_allow = { "alice", "edit", "VacationPhoto94.jpg", Allow },
         alice_view_allow = { "alice", "view", "VacationPhoto94.jpg", Allow },
@@ -160,26 +228,6 @@ permit (
         let decision = engine.evaluate(&request).unwrap();
         assert_eq!(decision, expected);
     }
-
-    const TEST_POLICY_WITH_CONTEXT: &str = r#"
-    permit (
-        principal == User::"alice",
-        action == Action::"create_host",
-        resource is Host
-    ) when {
-        resource.name like "web*" &&
-        resource.ip.isInRange(ip("192.0.1.0/24"))
-    };
-
-    permit (
-        principal == User::"bob",
-        action == Action::"create_host",
-        resource is Host
-    ) when {
-        resource.name like "bob*" &&
-        resource.ip.isInRange(ip("192.0.0.0/24"))
-    };
-"#;
 
     #[parameterized(
         alice_create_host_allow = { "alice", "create_host", "web-01.example.com", "192.0.1.1", Allow },
@@ -209,13 +257,6 @@ permit (
         assert_eq!(decision, expected);
     }
 
-    const TEST_POLICY_WITHOUT_BOB: &str = r#"
-permit (
-    principal == User::"alice",
-    action in [Action::"view", Action::"edit", Action::"delete"],
-    resource == Photo::"VacationPhoto94.jpg"
-);
-"#;
     #[test]
     fn test_reload_policy() {
         let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
@@ -232,26 +273,6 @@ permit (
         engine.reload_from_str(TEST_POLICY_WITHOUT_BOB).unwrap();
         assert_eq!(engine.evaluate(&request).unwrap(), Deny);
     }
-
-    const TEST_PERMISSION_POLICY: &str = r#"
-permit (
-    principal == User::"alice",
-    action in [Action::"view", Action::"edit", Action::"delete"],
-    resource == Photo::"VacationPhoto94.jpg"
-);
-
-permit (
-    principal == User::"alice",
-    action == Action::"create_host",
-    resource is Host
-);
-
-permit (
-    principal == User::"bob",
-    action == Action::"view",
-    resource == Photo::"VacationPhoto94.jpg"
-);
-"#;
 
     #[parameterized(
         alice_permissions = { "alice", vec![], 2, vec!["create_host", "delete", "edit", "view"] },
@@ -305,5 +326,28 @@ permit (
                 exp
             );
         }
+    }
+
+    #[parameterized(
+        alice_view_allow = { "alice", "view", "VacationPhoto94.jpg", Allow },
+        alice_edit_deny_explicit = { "alice", "edit", "VacationPhoto94.jpg", Deny },
+        alice_delete_forbid_any = { "alice", "delete", "VacationPhoto94.jpg", Deny },
+    )]
+    fn test_policy_with_forbid(user: &str, action: &str, resource: &str, expected: Decision) {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_FORBID).unwrap();
+
+        // Convert the resource to the appropriate type
+        let resource = Resource::Photo {
+            id: resource.to_string(),
+        };
+
+        let request = Request {
+            principal: user.into(),
+            action: action.into(),
+            groups: vec![],
+            resource,
+        };
+        let decision = engine.evaluate(&request).unwrap();
+        assert_eq!(decision, expected);
     }
 }
