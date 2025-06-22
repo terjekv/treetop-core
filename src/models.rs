@@ -133,6 +133,21 @@ pub struct User {
     pub id: String,
 }
 
+impl User {
+    /// Create a new user with an optional scope.
+    pub fn new<T: Into<String>>(id: T, scope: Option<Vec<String>>) -> Self {
+        User {
+            scope: scope.map(|s| s.join("::")),
+            id: id.into(),
+        }
+    }
+
+    /// Create a new user without a scope.
+    pub fn without_scope<T: Into<String>>(id: T) -> Self {
+        User::new(id, None)
+    }
+}
+
 impl CedarAtom for User {
     fn cedar_type() -> &'static str {
         "User"
@@ -160,6 +175,21 @@ where
 pub struct Action {
     pub scope: Option<String>,
     pub id: String,
+}
+
+impl Action {
+    /// Create a new action with an optional scope.
+    pub fn new<T: Into<String>>(id: T, scope: Option<Vec<String>>) -> Self {
+        Action {
+            scope: scope.map(|s| s.join("::")),
+            id: id.into(),
+        }
+    }
+
+    /// Create a new action without a scope.
+    pub fn without_scope<T: Into<String>>(id: T) -> Self {
+        Action::new(id, None)
+    }
 }
 
 impl CedarAtom for Action {
