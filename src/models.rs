@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::error::PolicyError;
+use crate::host_patterns::HOST_PATTERNS;
 use crate::traits::CedarAtom;
 
 /// The API-level request, with strongly-typed principal, action, groups, and resource.
@@ -76,6 +77,18 @@ impl CedarAtom for Resource {
                 attrs.insert(
                     "ip".to_string(),
                     RestrictedExpression::new_ip(ip.to_string()),
+                );
+
+                let reg = HOST_PATTERNS.read().unwrap();
+                let mut matched = Vec::new();
+                for (label, re) in reg.iter() {
+                    if re.is_match(name) {
+                        matched.push(RestrictedExpression::new_string(label.clone()));
+                    }
+                }
+                attrs.insert(
+                    "nameLabels".to_string(),
+                    RestrictedExpression::new_set(matched),
                 );
             }
         }

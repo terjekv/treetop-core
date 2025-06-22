@@ -111,6 +111,7 @@ impl PolicyEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::host_patterns::initialize_host_patterns;
     use crate::models::{
         Decision::Allow, Decision::Deny, Resource, Resource::Host, Resource::Photo,
     };
@@ -195,6 +196,25 @@ forbid (
     action == Action::"delete",
     resource == Photo::"VacationPhoto94.jpg"
 );
+"#;
+
+    const TEST_POLICY_WITH_HOST_PATTERNS: &str = r#"
+permit (
+    principal == User::"alice",
+    action == Action::"create_host",
+    resource is Host
+) when {
+    resource.nameLabels.contains("example_domain")
+};
+
+permit (
+    principal == User::"bob",
+    action == Action::"create_host",
+    resource is Host
+) when {
+    resource.nameLabels.contains("valid_web_name") &&
+    resource.nameLabels.contains("example_domain")
+};
 "#;
 
     #[parameterized(
@@ -345,5 +365,38 @@ forbid (
         };
         let decision = engine.evaluate(&request).unwrap();
         assert_eq!(decision, expected);
+    }
+
+    #[parameterized(
+        alice_web_and_example_allow = { "alice", "web-01.example.com", Allow },
+        alice_no_web_allow = { "alice", "flappa.example.com", Allow },
+        alice_only_example_allow = { "alice", "whatever.example.com", Allow },
+        alice_no_example_deny = { "alice", "web.examples.com", Deny},
+        bob_web_and_example_allow = { "bob", "web-01.example.com", Allow },
+        bob_host_pattern_no_web_deny = { "bob", "somehost.example.com", Deny },
+        bob_host_pattern_no_example_deny = { "bob", "example.com", Deny },
+        
+    )]
+    fn test_policy_with_host_patterns(username: &str, host_name: &str, expected_match: Decision) {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_HOST_PATTERNS).unwrap();
+        initialize_host_patterns(vec![
+            ("valid_web_name".to_string(), regex::Regex::new(r"^web.*").unwrap()),
+            (
+                "example_domain".to_string(),
+                regex::Regex::new(r"example\.com$").unwrap(),
+            ),
+        ]);
+
+        let request = Request {
+            principal: username.into(),
+            action: "create_host".into(),
+            groups: vec![],
+            resource: Host {
+                name: host_name.to_string(),
+                ip: "10.0.0.1".parse().unwrap(),
+            },
+        };
+        let decision = engine.evaluate(&request).unwrap();
+        assert_eq!(decision, expected_match);
     }
 }
