@@ -44,6 +44,11 @@
 //!
 //! let decision = engine.evaluate(&request).unwrap();
 //! assert_eq!(decision, Decision::Allow);
+//!
+//! // List all of alice's policies
+//! let policies = engine.list_policies_for_user("alice", vec![]).unwrap();
+//! // This value is also seralizable to JSON
+//! let json = serde_json::to_string(&policies).unwrap();
 //! ```
 //!
 //!

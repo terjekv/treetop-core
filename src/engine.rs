@@ -77,7 +77,7 @@ impl PolicyEngine {
         Ok(result.decision().into())
     }
 
-    pub fn list_permissions_for_user(
+    pub fn list_policies_for_user(
         &self,
         user: &str,
         scope: Vec<String>,
@@ -311,7 +311,7 @@ permit (
     ) {
         let engine = PolicyEngine::new_from_str(TEST_PERMISSION_POLICY).unwrap();
         let user_policies = engine
-            .list_permissions_for_user(user, scope)
+            .list_policies_for_user(user, scope)
             .expect("Failed to list permissions");
         assert_eq!(user_policies.policies().len(), expected_policies);
 
@@ -330,7 +330,7 @@ permit (
     fn test_serialize_user_permissions() {
         let combined = TEST_PERMISSION_POLICY.to_string() + TEST_POLICY_WITH_CONTEXT;
         let engine = PolicyEngine::new_from_str(&combined).unwrap();
-        let perms = engine.list_permissions_for_user("alice", vec![]).unwrap();
+        let perms = engine.list_policies_for_user("alice", vec![]).unwrap();
 
         let expected_serialized = r#"{"user":"alice","policies":[{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"in","entities":[{"type":"Action","id":"view"},{"type":"Action","id":"edit"},{"type":"Action","id":"delete"}]},"resource":{"op":"==","entity":{"type":"Photo","id":"VacationPhoto94.jpg"}},"conditions":[]},{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"==","entity":{"type":"Action","id":"create_host"}},"resource":{"op":"is","entity_type":"Host"},"conditions":[]},{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"==","entity":{"type":"Action","id":"create_host"}},"resource":{"op":"is","entity_type":"Host"},"conditions":[{"kind":"when","body":{"&&":{"left":{"like":{"left":{".":{"left":{"Var":"resource"},"attr":"name"}},"pattern":[{"Literal":"w"},{"Literal":"e"},{"Literal":"b"},"Wildcard"]}},"right":{"isInRange":[{".":{"left":{"Var":"resource"},"attr":"ip"}},{"ip":[{"Value":"192.0.1.0/24"}]}]}}}}]}]}"#;
 
