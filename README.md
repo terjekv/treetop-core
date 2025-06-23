@@ -42,7 +42,7 @@ permit (
 };
 ```
 
-Alice can perform an action called `assign_to_restricted_ips`, no matter the resource. Bob can only perform the action "assign_to_gateways" for hosts
+Alice can perform an action called `assign_to_restricted_ips`, no matter the resource. Bob can only perform the action `assign_to_gateways` for hosts
 within the RFC 1918 range for 10.0.0.0/8. The implementation of these action is up to the client application, but we can imagine that restricted IPs
 consist of IPs that are critical for infastructure, like gateways, broadcast adresses, and possibly some reserved IPs.
 
