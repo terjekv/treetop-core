@@ -58,7 +58,7 @@
 pub use engine::PolicyEngine;
 pub use error::PolicyError;
 pub use host_patterns::initialize_host_patterns;
-pub use models::{Action, Decision, Group, Request, Resource, Resource::Host, User};
+pub use models::{Action, Decision, Group, Request, Resource, Resource::Host, User, UserPolicies};
 
 mod engine;
 mod error;
