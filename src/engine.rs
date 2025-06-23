@@ -217,6 +217,14 @@ permit (
 };
 "#;
 
+    const TEST_POLICY_ACTION_ONLY_HERE: &str = r#"
+permit (
+    principal == User::"alice",
+    action == Action::"only_here",
+    resource
+);
+"#;
+
     #[parameterized(
         alice_edit_allow = { "alice", "edit", "VacationPhoto94.jpg", Allow },
         alice_view_allow = { "alice", "view", "VacationPhoto94.jpg", Allow },
@@ -398,5 +406,26 @@ permit (
         };
         let decision = engine.evaluate(&request).unwrap();
         assert_eq!(decision, expected_match);
+    }
+
+    #[parameterized(
+        alice_allow = {"alice", Allow},
+        bob_deny = {"bob", Deny}
+    )]
+    fn test_only_here_policy(username: &str, expected: Decision) {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_ACTION_ONLY_HERE).unwrap();
+        let request = Request {
+            principal: username.into(),
+            action: "only_here".into(),
+            groups: vec![],
+            resource: Host {
+                name: "irrelevant.example.com".into(),
+                ip: "10.0.0.1".parse().unwrap()
+            },
+        };
+        
+        let decision = engine.evaluate(&request).unwrap();
+        assert_eq!(decision, expected);
+
     }
 }
