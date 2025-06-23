@@ -19,7 +19,7 @@ use crate::traits::CedarAtom;
 pub struct Request {
     pub principal: User,
     pub action: Action,
-    pub groups: Vec<Group>,
+    pub groups: Groups,
     pub resource: Resource,
 }
 
@@ -44,6 +44,15 @@ impl From<cedar_policy::Decision> for Decision {
 pub enum Resource {
     Photo { id: String },
     Host { name: String, ip: IpAddr },
+}
+
+impl std::fmt::Display for Resource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Resource::Photo { id } => write!(f, "Photo::\"{}\"", id),
+            Resource::Host { name, .. } => write!(f, "Host::\"{}\"", name),
+        }
+    }
 }
 
 impl CedarAtom for Resource {
@@ -133,6 +142,16 @@ pub struct User {
     pub id: String,
 }
 
+impl std::fmt::Display for User {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(scope) = &self.scope {
+            write!(f, "User::{}::\"{}\"", scope, self.id)
+        } else {
+            write!(f, "User::\"{}\"", self.id)
+        }
+    }
+}
+
 impl User {
     /// Create a new user with an optional scope.
     pub fn new<T: Into<String>>(id: T, scope: Option<Vec<String>>) -> Self {
@@ -175,6 +194,16 @@ where
 pub struct Action {
     pub scope: Option<String>,
     pub id: String,
+}
+
+impl std::fmt::Display for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(scope) = &self.scope {
+            write!(f, "Action::{}::\"{}\"", scope, self.id)
+        } else {
+            write!(f, "Action::\"{}\"", self.id)
+        }
+    }
 }
 
 impl Action {
@@ -225,6 +254,16 @@ impl CedarAtom for Group {
 
     fn cedar_id(&self) -> &str {
         &self.0
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Groups(pub Vec<Group>);
+
+impl std::fmt::Display for Groups {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let group_names: Vec<String> = self.0.iter().map(|g| g.0.clone()).collect();
+        write!(f, "[{}]", group_names.join(", "))
     }
 }
 

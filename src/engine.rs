@@ -12,7 +12,7 @@ use crate::{
     models::{Decision, Request},
 };
 
-use tracing::{debug}; 
+use tracing::{debug, info, warn}; 
 /// The main engine handle. Cloneable and thread-safe.
 #[derive(Clone)]
 pub struct PolicyEngine {
@@ -34,7 +34,7 @@ impl PolicyEngine {
     }
 
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
-        debug!(event = "Evaluating request", request = ?request );
+        debug!(event = "Request", phase = "Evaluation", principal = request.principal.to_string(), action = request.action.to_string(), resource = request.resource.to_string(), groups = request.groups.to_string());
         // 1. Turn your Atom types into EntityUids (the “P, A, R” in PARC)
         let principal: EntityUid = request.principal.cedar_entity_uid()?;
         let action: EntityUid = request.action.cedar_entity_uid()?;
@@ -43,7 +43,7 @@ impl PolicyEngine {
         // 2. Build an Context from the resource, this may be empty.
         let context = request.resource.cedar_ctx()?;
 
-        debug!(event = "Request details", principal = ?principal, action = ?action, resource = ?resource, context = ?context);
+        debug!(event = "Request", phase = "Parsed", principal = principal.to_string(), action = action.to_string(), resource = resource.to_string(), context = context.to_string());
 
         // 3. Create the Cedar request
         let cedar_req = CedarRequest::new(principal, action, resource, context, None)?;
@@ -52,22 +52,24 @@ impl PolicyEngine {
         let entities = Entities::empty();
         let entities = entities.add_entities(vec![request.resource.cedar_entity()?], None)?;
 
-        debug!(event = "Request entities", entities = ?entities);
+        debug!(event = "Request", phase = "Entities", entities = request.resource.cedar_entity()?.to_string());
 
         // 5. Run the authorizer
         let guard = self.inner.read()?;
         let result = Authorizer::new().is_authorized(&cedar_req, &guard, &entities);
-
-        debug!(event = "Request result", result = ?result);
+        
+        debug!(event = "Request", phase = "Result", result = ?result.decision());
 
         if result.decision() == cedar_policy::Decision::Allow {
             let reasons = result.diagnostics().reason();
             for reason in reasons {
                 let policy = guard.policy(reason);
+                let reason = reason.to_string();
                 if let Some(policy) = policy {
-                    println!("Policy {reason}: {policy}");
+                    let policy = policy.to_string();
+                    info!(event = "Request", phase = "Policy", reason = reason, policy = policy);
                 } else {
-                    println!("No policy found for reason: {reason}");
+                    warn!(event = "Request", phase = "Policy", reason = reason);
                 }
             }
         }
@@ -115,6 +117,7 @@ impl PolicyEngine {
 mod tests {
     use super::*;
     use crate::host_patterns::initialize_host_patterns;
+    use crate::models::Groups;
     use crate::models::{
         Decision::Allow, Decision::Deny, Resource, Resource::Host, Resource::Photo,
     };
@@ -249,7 +252,7 @@ permit (
         let request = Request {
             principal: user.into(),
             action: action.into(),
-            groups: vec![],
+            groups: Groups(vec![]),
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
@@ -274,7 +277,7 @@ permit (
         let request = Request {
             principal: user.into(),
             action: action.into(),
-            groups: vec![],
+            groups: Groups(vec![]),
             resource: Host {
                 name: host_name.into(),
                 ip: ip.parse().unwrap(),
@@ -290,7 +293,7 @@ permit (
         let request = Request {
             principal: "bob".into(),
             action: "view".into(),
-            groups: vec![],
+            groups: Groups(vec![]),
             resource: Photo {
                 id: "VacationPhoto94.jpg".into(),
             },
@@ -371,7 +374,7 @@ permit (
         let request = Request {
             principal: user.into(),
             action: action.into(),
-            groups: vec![],
+            groups: Groups(vec![]),
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
@@ -401,7 +404,7 @@ permit (
         let request = Request {
             principal: username.into(),
             action: "create_host".into(),
-            groups: vec![],
+            groups: Groups(vec![]),
             resource: Host {
                 name: host_name.to_string(),
                 ip: "10.0.0.1".parse().unwrap(),
@@ -420,7 +423,7 @@ permit (
         let request = Request {
             principal: username.into(),
             action: "only_here".into(),
-            groups: vec![],
+            groups: Groups(vec![]),
             resource: Host {
                 name: "irrelevant.example.com".into(),
                 ip: "10.0.0.1".parse().unwrap()
