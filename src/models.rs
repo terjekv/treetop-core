@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use std::str::FromStr;
 
 use itertools::Itertools;
+use strum_macros::{Display, EnumDiscriminants, EnumString};
 
 use cedar_policy::{ActionConstraint, Context, EntityUid, Policy, RestrictedExpression};
 
@@ -39,8 +40,9 @@ impl From<cedar_policy::Decision> for Decision {
     }
 }
 
-/// A resource in our domain: either a Photo or a Host record.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A resource in our domain.
+#[derive(Debug, Clone, Serialize, Deserialize, EnumDiscriminants)]
+#[strum_discriminants(name(ResourceKind), derive(EnumString, Display))]
 pub enum Resource {
     Photo { id: String },
     Host { name: String, ip: IpAddr },
@@ -256,7 +258,7 @@ impl CedarAtom for Group {
         &self.0
     }
 }
-
+/// A collection of Group entries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Groups(pub Vec<Group>);
 
