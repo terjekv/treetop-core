@@ -45,6 +45,8 @@ impl PolicyEngine {
 
         debug!(event = "Request", phase = "Parsed", principal = principal.to_string(), action = action.to_string(), resource = resource.to_string(), context = context.to_string());
 
+        println!("Cedar Request: principal = {}, action = {}, resource = {}, context = {}", principal, action, resource, context);
+
         // 3. Create the Cedar request
         let cedar_req = CedarRequest::new(principal, action, resource, context, None)?;
 
@@ -229,6 +231,16 @@ permit (
     action == Action::"only_here",
     resource
 );
+"#;
+
+    const TEST_POLICY_GENERIC_RESOURCE: &str = r#"
+permit (
+    principal == User::"alice",
+    action == Action::"assign_gateway",
+    resource is Gateway
+) when {
+    resource.id == "mygateway"
+};
 "#;
 
     #[parameterized(
@@ -433,5 +445,25 @@ permit (
         let decision = engine.evaluate(&request).unwrap();
         assert_eq!(decision, expected);
 
+    }
+
+    #[parameterized(
+        alice_assign_gateway_allow = { "alice", "assign_gateway", "mygateway", Allow },
+        bob_assign_gateway_deny = { "bob", "assign_gateway", "mygateway", Deny },
+        alice_assign_gateway_wrong_id_deny = { "alice", "assign_gateway", "wronggateway", Deny },
+    )]
+    fn test_generic_policies(user: &str, action: &str, resource_id: &str, expected: Decision) {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_GENERIC_RESOURCE).unwrap();
+        let request = Request {
+            principal: user.into(),
+            action: action.into(),
+            groups: Groups(vec![]),
+            resource: Resource::Generic {
+                kind: "Gateway".to_string(),
+                id: resource_id.to_string(),
+            },
+        };
+        let decision = engine.evaluate(&request).unwrap();
+        assert_eq!(decision, expected);
     }
 }

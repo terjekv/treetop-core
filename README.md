@@ -105,3 +105,37 @@ let policies = engine.list_policies_for_user("alice", vec![]).unwrap();
 // This value is also seralizable to JSON
 let json = serde_json::to_string(&policies).unwrap();
 ```
+
+## Passing generic resources
+
+It is impractical to hard code all relevant resource types into the policy engine. Instead, there is the option to pass a `Generic` resource into the engine, which takes two parameters, a `kind` and an `id`. This allows for more flexibility in defining resources without needing to explicitly enumerate all possible types.
+
+Imagine the following policy:
+
+```cedar
+permit (
+   principal == User::"alice",
+   action == Action::"build_house",
+   resource is House
+) when {
+    resource.id == "house-1"
+};
+```
+
+This can be queried with the following request:
+
+```rust
+Request {
+   principal: User::new("alice", None),
+   action: Action::new("build_house", None),
+   groups: vec![], 
+   resource: Resource::Generic {
+      kind: "House".into(),
+      id: "house-1".into(),
+   },
+};
+```
+
+This allows for a querying resources that are not explicitly defined in the policy engine, but instead defined in the policy file.
+Both `id` and `kind` are passed as context, as strings, into the query. `kind` will always match the resource name.
+

@@ -43,32 +43,41 @@ impl From<cedar_policy::Decision> for Decision {
 /// A resource in our domain.
 #[derive(Debug, Clone, Serialize, Deserialize, EnumDiscriminants)]
 #[strum_discriminants(name(ResourceKind), derive(EnumString, Display))]
+#[strum(serialize_all = "PascalCase")]
 pub enum Resource {
     Photo { id: String },
     Host { name: String, ip: IpAddr },
+    Generic { kind: String, id: String },
 }
 
 impl std::fmt::Display for Resource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Resource::Photo { id } => write!(f, "Photo::\"{}\"", id),
-            Resource::Host { name, .. } => write!(f, "Host::\"{}\"", name),
-        }
+        // Turn &self into its discriminant:
+        let kind = ResourceKind::from(self).to_string();
+        // Pick the right “id” field for each variant:
+        let id = match self {
+            Resource::Photo { id } => id,
+            Resource::Host { name, .. } => name,
+            Resource::Generic { id, .. } => id,
+        };
+        write!(f, "{}::\"{}\"", kind, id)
     }
 }
 
 impl CedarAtom for Resource {
-    fn cedar_entity_uid(&self) -> Result<cedar_policy::EntityUid, PolicyError> {
+    fn cedar_entity_uid(&self) -> Result<EntityUid, PolicyError> {
         let literal = match self {
-            Resource::Photo { id } => {
-                format!(r#"Photo::"{id}""#)
+            Resource::Generic { kind, id } => {
+                format!("{kind}::\"{id}\"")
             }
-            Resource::Host { name, .. } => {
-                format!(r#"Host::"{name}""#)
+            _ => {
+                let kind = ResourceKind::from(self).to_string();
+                let id = self.cedar_id();
+                format!("{kind}::\"{id}\"")
             }
         };
-        cedar_policy::EntityUid::from_str(&literal)
-            .map_err(|e| PolicyError::ParseError(e.to_string()))
+
+        EntityUid::from_str(&literal).map_err(|e| PolicyError::ParseError(e.to_string()))
     }
 
     fn cedar_attr(&self) -> Result<HashMap<String, RestrictedExpression>, PolicyError> {
@@ -102,6 +111,13 @@ impl CedarAtom for Resource {
                     RestrictedExpression::new_set(matched),
                 );
             }
+            Resource::Generic { kind, id } => {
+                attrs.insert(
+                    "kind".into(),
+                    RestrictedExpression::new_string(kind.clone()),
+                );
+                attrs.insert("id".into(), RestrictedExpression::new_string(id.clone()));
+            }
         }
         Ok(attrs)
     }
@@ -122,6 +138,16 @@ impl CedarAtom for Resource {
                 Ok(result)
             }
             Resource::Photo { .. } => Ok(Context::empty()),
+            Resource::Generic { kind, id } => {
+                let result = Context::from_pairs(vec![
+                    (
+                        "kind".into(),
+                        RestrictedExpression::new_string(kind.clone()),
+                    ),
+                    ("id".into(), RestrictedExpression::new_string(id.clone())),
+                ])?;
+                Ok(result)
+            }
         }
     }
 
@@ -133,6 +159,7 @@ impl CedarAtom for Resource {
         match self {
             Resource::Photo { id } => id,
             Resource::Host { name, .. } => name,
+            Resource::Generic { id, .. } => id,
         }
     }
 }
