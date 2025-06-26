@@ -1,0 +1,52 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"create_host\",\n    resource is Host\n) when {\n    resource.nameLabels.contains(\"example_domain\")\n};",
+      "json": {
+        "action": {
+          "entity": {
+            "id": "create_host",
+            "type": "Action"
+          },
+          "op": "=="
+        },
+        "conditions": [
+          {
+            "body": {
+              "contains": {
+                "left": {
+                  ".": {
+                    "attr": "nameLabels",
+                    "left": {
+                      "Var": "resource"
+                    }
+                  }
+                },
+                "right": {
+                  "Value": "example_domain"
+                }
+              }
+            },
+            "kind": "when"
+          }
+        ],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "alice",
+            "type": "User"
+          },
+          "op": "=="
+        },
+        "resource": {
+          "entity_type": "Host",
+          "op": "is"
+        }
+      }
+    }
+  }
+}

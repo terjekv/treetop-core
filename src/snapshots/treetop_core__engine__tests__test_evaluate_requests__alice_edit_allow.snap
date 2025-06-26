@@ -1,0 +1,46 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "permit (\n    principal == User::\"alice\",\n    action in [Action::\"view\", Action::\"edit\", Action::\"delete\"],\n    resource == Photo::\"VacationPhoto94.jpg\"\n);",
+      "json": {
+        "action": {
+          "entities": [
+            {
+              "id": "view",
+              "type": "Action"
+            },
+            {
+              "id": "edit",
+              "type": "Action"
+            },
+            {
+              "id": "delete",
+              "type": "Action"
+            }
+          ],
+          "op": "in"
+        },
+        "conditions": [],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "alice",
+            "type": "User"
+          },
+          "op": "=="
+        },
+        "resource": {
+          "entity": {
+            "id": "VacationPhoto94.jpg",
+            "type": "Photo"
+          },
+          "op": "=="
+        }
+      }
+    }
+  }
+}

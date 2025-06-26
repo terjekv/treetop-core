@@ -1,0 +1,71 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "permit (\n    principal == User::\"bob\",\n    action == Action::\"create_host\",\n    resource is Host\n) when {\n    resource.nameLabels.contains(\"valid_web_name\") &&\n    resource.nameLabels.contains(\"example_domain\")\n};",
+      "json": {
+        "action": {
+          "entity": {
+            "id": "create_host",
+            "type": "Action"
+          },
+          "op": "=="
+        },
+        "conditions": [
+          {
+            "body": {
+              "&&": {
+                "left": {
+                  "contains": {
+                    "left": {
+                      ".": {
+                        "attr": "nameLabels",
+                        "left": {
+                          "Var": "resource"
+                        }
+                      }
+                    },
+                    "right": {
+                      "Value": "valid_web_name"
+                    }
+                  }
+                },
+                "right": {
+                  "contains": {
+                    "left": {
+                      ".": {
+                        "attr": "nameLabels",
+                        "left": {
+                          "Var": "resource"
+                        }
+                      }
+                    },
+                    "right": {
+                      "Value": "example_domain"
+                    }
+                  }
+                }
+              }
+            },
+            "kind": "when"
+          }
+        ],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "bob",
+            "type": "User"
+          },
+          "op": "=="
+        },
+        "resource": {
+          "entity_type": "Host",
+          "op": "is"
+        }
+      }
+    }
+  }
+}

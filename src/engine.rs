@@ -4,15 +4,15 @@ use cedar_policy::{
 };
 use std::sync::{Arc, RwLock};
 
-use crate::models::UserPolicies;
+use crate::models::{PermitPolicy, UserPolicies};
 use crate::traits::CedarAtom;
 use crate::{
     error::PolicyError,
     loader,
-    models::{Decision, Request},
+    models::{Decision, FromDecisionWithPolicy, Request},
 };
 
-use tracing::{debug, info, warn}; 
+use tracing::{debug, info, warn};
 /// The main engine handle. Cloneable and thread-safe.
 #[derive(Clone)]
 pub struct PolicyEngine {
@@ -34,7 +34,14 @@ impl PolicyEngine {
     }
 
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
-        debug!(event = "Request", phase = "Evaluation", principal = request.principal.to_string(), action = request.action.to_string(), resource = request.resource.to_string(), groups = request.groups.to_string());
+        debug!(
+            event = "Request",
+            phase = "Evaluation",
+            principal = request.principal.to_string(),
+            action = request.action.to_string(),
+            resource = request.resource.to_string(),
+            groups = request.groups.to_string()
+        );
         // 1. Turn your Atom types into EntityUids (the “P, A, R” in PARC)
         let principal: EntityUid = request.principal.cedar_entity_uid()?;
         let action: EntityUid = request.action.cedar_entity_uid()?;
@@ -43,9 +50,19 @@ impl PolicyEngine {
         // 2. Build an Context from the resource, this may be empty.
         let context = request.resource.cedar_ctx()?;
 
-        debug!(event = "Request", phase = "Parsed", principal = principal.to_string(), action = action.to_string(), resource = resource.to_string(), context = context.to_string());
+        debug!(
+            event = "Request",
+            phase = "Parsed",
+            principal = principal.to_string(),
+            action = action.to_string(),
+            resource = resource.to_string(),
+            context = context.to_string()
+        );
 
-        println!("Cedar Request: principal = {}, action = {}, resource = {}, context = {}", principal, action, resource, context);
+        println!(
+            "Cedar Request: principal = {}, action = {}, resource = {}, context = {}",
+            principal, action, resource, context
+        );
 
         // 3. Create the Cedar request
         let cedar_req = CedarRequest::new(principal, action, resource, context, None)?;
@@ -54,29 +71,46 @@ impl PolicyEngine {
         let entities = Entities::empty();
         let entities = entities.add_entities(vec![request.resource.cedar_entity()?], None)?;
 
-        debug!(event = "Request", phase = "Entities", entities = request.resource.cedar_entity()?.to_string());
+        debug!(
+            event = "Request",
+            phase = "Entities",
+            entities = request.resource.cedar_entity()?.to_string()
+        );
 
         // 5. Run the authorizer
         let guard = self.inner.read()?;
         let result = Authorizer::new().is_authorized(&cedar_req, &guard, &entities);
-        
+
         debug!(event = "Request", phase = "Result", result = ?result.decision());
+        let mut permit_policy = PermitPolicy::default();
 
         if result.decision() == cedar_policy::Decision::Allow {
             let reasons = result.diagnostics().reason();
             for reason in reasons {
                 let policy = guard.policy(reason);
-                let reason = reason.to_string();
                 if let Some(policy) = policy {
-                    let policy = policy.to_string();
-                    info!(event = "Request", phase = "Policy", reason = reason, policy = policy);
+                    permit_policy.literal = policy.to_string().clone();
+                    permit_policy.json = policy.to_json().unwrap_or_default();
+                    info!(
+                        event = "Request",
+                        phase = "Policy",
+                        reason = reason.to_string(),
+                        policy = permit_policy.literal
+                    );
                 } else {
-                    warn!(event = "Request", phase = "Policy", reason = reason);
+                    warn!(
+                        event = "Request",
+                        phase = "Policy",
+                        reason = reason.to_string()
+                    );
                 }
             }
         }
 
-        Ok(result.decision().into())
+        Ok(Decision::from_decision_with_policy(
+            result.decision(),
+            permit_policy,
+        ))
     }
 
     pub fn list_policies_for_user(
@@ -123,7 +157,7 @@ mod tests {
     use crate::models::{
         Decision::Allow, Decision::Deny, Resource, Resource::Host, Resource::Photo,
     };
-    use serde_json::Value;
+    use insta::assert_json_snapshot;
     use yare::parameterized;
 
     const TEST_POLICY: &str = r#"
@@ -244,16 +278,16 @@ permit (
 "#;
 
     #[parameterized(
-        alice_edit_allow = { "alice", "edit", "VacationPhoto94.jpg", Allow },
-        alice_view_allow = { "alice", "view", "VacationPhoto94.jpg", Allow },
-        alice_delete_allow = { "alice", "delete", "VacationPhoto94.jpg", Allow },
-        alice_view_deny_wrong_photo = { "alice", "view", "wrongphoto.jpg", Deny },
-        bob_view_allow = { "bob", "view", "VacationPhoto94.jpg", Allow },
-        bob_edit_deny = { "bob", "edit", "VacationPhoto94.jpg", Deny },
-        bob_view_deny_wrong_photo = { "bob", "edit", "wrongphoto.jpg", Deny },
-        charlie_view_deny = { "charlie", "view", "VacationPhoto94.jpg", Deny },
+        alice_edit_allow = { "alice", "edit", "VacationPhoto94.jpg" },
+        alice_view_allow = { "alice", "view", "VacationPhoto94.jpg" },
+        alice_delete_allow = { "alice", "delete", "VacationPhoto94.jpg" },
+        alice_view_deny_wrong_photo = { "alice", "view", "wrongphoto.jpg" },
+        bob_view_allow = { "bob", "view", "VacationPhoto94.jpg" },
+        bob_edit_deny = { "bob", "edit", "VacationPhoto94.jpg", },
+        bob_view_deny_wrong_photo = { "bob", "edit", "wrongphoto.jpg", },
+        charlie_view_deny = { "charlie", "view", "VacationPhoto94.jpg", },
     )]
-    fn test_evaluate_requests(user: &str, action: &str, resource: &str, expected: Decision) {
+    fn test_evaluate_requests(user: &str, action: &str, resource: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
 
         // Convert the resource to the appropriate type
@@ -268,22 +302,18 @@ permit (
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
-        assert_eq!(decision, expected);
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(decision);
+        });
     }
 
     #[parameterized(
-        alice_create_host_allow = { "alice", "create_host", "web-01.example.com", "192.0.1.1", Allow },
-        bob_create_host_allow = { "bob", "create_host", "bob-01.example.com", "192.0.0.1", Allow },
-        alice_create_host_wrong_net_deny = { "alice", "create_host", "web-99.example.com", "192.0.2.1", Deny },
-        alice_create_host_wrong_name_deny = { "alice", "create_host", "abc.example.com", "192.0.1.2", Deny },
+        alice_create_host_allow = { "alice", "create_host", "web-01.example.com", "192.0.1.1" }, 
+        bob_create_host_allow = { "bob", "create_host", "bob-01.example.com", "192.0.0.1" }, 
+        alice_create_host_wrong_net_deny = { "alice", "create_host", "web-99.example.com", "192.0.2.1" },
+        alice_create_host_wrong_name_deny = { "alice", "create_host", "abc.example.com", "192.0.1.2" },
     )]
-    fn test_create_host_requests(
-        user: &str,
-        action: &str,
-        host_name: &str,
-        ip: &str,
-        expected: Decision,
-    ) {
+    fn test_create_host_requests(user: &str, action: &str, host_name: &str, ip: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_CONTEXT).unwrap();
 
         let request = Request {
@@ -296,7 +326,9 @@ permit (
             },
         };
         let decision = engine.evaluate(&request).unwrap();
-        assert_eq!(decision, expected);
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(decision);
+        });
     }
 
     #[test]
@@ -310,7 +342,8 @@ permit (
                 id: "VacationPhoto94.jpg".into(),
             },
         };
-        assert_eq!(engine.evaluate(&request).unwrap(), Allow);
+
+        assert!(matches!(engine.evaluate(&request).unwrap(), Allow { .. }));
 
         engine.reload_from_str(TEST_POLICY_WITHOUT_BOB).unwrap();
         assert_eq!(engine.evaluate(&request).unwrap(), Deny);
@@ -344,6 +377,9 @@ permit (
         }
     }
 
+    // So, the arrays in the serialized output are not guaranteed to be in the same order,
+    // even with sort-maps set to true for insta. As such, we end up needing to do this
+    // rather manually.
     #[test]
     fn test_serialize_user_permissions() {
         let combined = TEST_PERMISSION_POLICY.to_string() + TEST_POLICY_WITH_CONTEXT;
@@ -352,8 +388,8 @@ permit (
 
         let expected_serialized = r#"{"user":"alice","policies":[{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"in","entities":[{"type":"Action","id":"view"},{"type":"Action","id":"edit"},{"type":"Action","id":"delete"}]},"resource":{"op":"==","entity":{"type":"Photo","id":"VacationPhoto94.jpg"}},"conditions":[]},{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"==","entity":{"type":"Action","id":"create_host"}},"resource":{"op":"is","entity_type":"Host"},"conditions":[]},{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"==","entity":{"type":"Action","id":"create_host"}},"resource":{"op":"is","entity_type":"Host"},"conditions":[{"kind":"when","body":{"&&":{"left":{"like":{"left":{".":{"left":{"Var":"resource"},"attr":"name"}},"pattern":[{"Literal":"w"},{"Literal":"e"},{"Literal":"b"},"Wildcard"]}},"right":{"isInRange":[{".":{"left":{"Var":"resource"},"attr":"ip"}},{"ip":[{"Value":"192.0.1.0/24"}]}]}}}}]}]}"#;
 
-        let actual: Value = serde_json::to_value(&perms).unwrap();
-        let expected: Value = serde_json::from_str(expected_serialized).unwrap();
+        let actual: serde_json::Value = serde_json::to_value(&perms).unwrap();
+        let expected: serde_json::Value = serde_json::from_str(expected_serialized).unwrap();
 
         assert_eq!(actual["user"], expected["user"]);
 
@@ -371,11 +407,11 @@ permit (
     }
 
     #[parameterized(
-        alice_view_allow = { "alice", "view", "VacationPhoto94.jpg", Allow },
-        alice_edit_deny_explicit = { "alice", "edit", "VacationPhoto94.jpg", Deny },
-        alice_delete_forbid_any = { "alice", "delete", "VacationPhoto94.jpg", Deny },
+        alice_view_allow = { "alice", "view", "VacationPhoto94.jpg" },
+        alice_edit_deny_explicit = { "alice", "edit", "VacationPhoto94.jpg" },
+        alice_delete_forbid_any = { "alice", "delete", "VacationPhoto94.jpg" },
     )]
-    fn test_policy_with_forbid(user: &str, action: &str, resource: &str, expected: Decision) {
+    fn test_policy_with_forbid(user: &str, action: &str, resource: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_FORBID).unwrap();
 
         // Convert the resource to the appropriate type
@@ -390,23 +426,29 @@ permit (
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
-        assert_eq!(decision, expected);
+
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(decision);
+        });
     }
 
     #[parameterized(
-        alice_web_and_example_allow = { "alice", "web-01.example.com", Allow },
-        alice_no_web_allow = { "alice", "flappa.example.com", Allow },
-        alice_only_example_allow = { "alice", "whatever.example.com", Allow },
-        alice_no_example_deny = { "alice", "web.examples.com", Deny},
-        bob_web_and_example_allow = { "bob", "web-01.example.com", Allow },
-        bob_host_pattern_no_web_deny = { "bob", "somehost.example.com", Deny },
-        bob_host_pattern_no_example_deny = { "bob", "example.com", Deny },
-        
+        alice_web_and_example_allow = { "alice", "web-01.example.com" },
+        alice_no_web_allow = { "alice", "flappa.example.com" },
+        alice_only_example_allow = { "alice", "whatever.example.com" },
+        alice_no_example_deny = { "alice", "web.examples.com" },
+        bob_web_and_example_allow = { "bob", "web-01.example.com" },
+        bob_host_pattern_no_web_deny = { "bob", "somehost.example.com" },
+        bob_host_pattern_no_example_deny = { "bob", "example.com" },
+
     )]
-    fn test_policy_with_host_patterns(username: &str, host_name: &str, expected_match: Decision) {
+    fn test_policy_with_host_patterns(username: &str, host_name: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_HOST_PATTERNS).unwrap();
         initialize_host_patterns(vec![
-            ("valid_web_name".to_string(), regex::Regex::new(r"^web.*").unwrap()),
+            (
+                "valid_web_name".to_string(),
+                regex::Regex::new(r"^web.*").unwrap(),
+            ),
             (
                 "example_domain".to_string(),
                 regex::Regex::new(r"example\.com$").unwrap(),
@@ -423,14 +465,16 @@ permit (
             },
         };
         let decision = engine.evaluate(&request).unwrap();
-        assert_eq!(decision, expected_match);
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(decision);
+        });
     }
 
     #[parameterized(
-        alice_allow = {"alice", Allow},
-        bob_deny = {"bob", Deny}
+        alice_allow = {"alice" },
+        bob_deny = {"bob" }
     )]
-    fn test_only_here_policy(username: &str, expected: Decision) {
+    fn test_only_here_policy(username: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_ACTION_ONLY_HERE).unwrap();
         let request = Request {
             principal: username.into(),
@@ -438,21 +482,22 @@ permit (
             groups: Groups(vec![]),
             resource: Host {
                 name: "irrelevant.example.com".into(),
-                ip: "10.0.0.1".parse().unwrap()
+                ip: "10.0.0.1".parse().unwrap(),
             },
         };
-        
-        let decision = engine.evaluate(&request).unwrap();
-        assert_eq!(decision, expected);
 
+        let decision = engine.evaluate(&request).unwrap();
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(decision);
+        });
     }
 
     #[parameterized(
-        alice_assign_gateway_allow = { "alice", "assign_gateway", "mygateway", Allow },
-        bob_assign_gateway_deny = { "bob", "assign_gateway", "mygateway", Deny },
-        alice_assign_gateway_wrong_id_deny = { "alice", "assign_gateway", "wronggateway", Deny },
+        alice_assign_gateway_allow = { "alice", "assign_gateway", "mygateway" },
+        bob_assign_gateway_deny = { "bob", "assign_gateway", "mygateway" },
+        alice_assign_gateway_wrong_id_deny = { "alice", "assign_gateway", "wronggateway" },
     )]
-    fn test_generic_policies(user: &str, action: &str, resource_id: &str, expected: Decision) {
+    fn test_generic_policies(user: &str, action: &str, resource_id: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_GENERIC_RESOURCE).unwrap();
         let request = Request {
             principal: user.into(),
@@ -464,6 +509,8 @@ permit (
             },
         };
         let decision = engine.evaluate(&request).unwrap();
-        assert_eq!(decision, expected);
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(decision);
+        });
     }
 }

@@ -1,0 +1,84 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"create_host\",\n    resource is Host\n) when {\n    resource.name like \"web*\" &&\n    resource.ip.isInRange(ip(\"192.0.1.0/24\"))\n};",
+      "json": {
+        "action": {
+          "entity": {
+            "id": "create_host",
+            "type": "Action"
+          },
+          "op": "=="
+        },
+        "conditions": [
+          {
+            "body": {
+              "&&": {
+                "left": {
+                  "like": {
+                    "left": {
+                      ".": {
+                        "attr": "name",
+                        "left": {
+                          "Var": "resource"
+                        }
+                      }
+                    },
+                    "pattern": [
+                      {
+                        "Literal": "w"
+                      },
+                      {
+                        "Literal": "e"
+                      },
+                      {
+                        "Literal": "b"
+                      },
+                      "Wildcard"
+                    ]
+                  }
+                },
+                "right": {
+                  "isInRange": [
+                    {
+                      ".": {
+                        "attr": "ip",
+                        "left": {
+                          "Var": "resource"
+                        }
+                      }
+                    },
+                    {
+                      "ip": [
+                        {
+                          "Value": "192.0.1.0/24"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "kind": "when"
+          }
+        ],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "alice",
+            "type": "User"
+          },
+          "op": "=="
+        },
+        "resource": {
+          "entity_type": "Host",
+          "op": "is"
+        }
+      }
+    }
+  }
+}

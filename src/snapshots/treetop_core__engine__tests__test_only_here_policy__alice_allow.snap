@@ -1,0 +1,32 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"only_here\",\n    resource\n);",
+      "json": {
+        "action": {
+          "entity": {
+            "id": "only_here",
+            "type": "Action"
+          },
+          "op": "=="
+        },
+        "conditions": [],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "alice",
+            "type": "User"
+          },
+          "op": "=="
+        },
+        "resource": {
+          "op": "All"
+        }
+      }
+    }
+  }
+}

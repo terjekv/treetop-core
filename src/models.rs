@@ -24,17 +24,37 @@ pub struct Request {
     pub resource: Resource,
 }
 
+/// A permit policy that permitted a specific action on a resource.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+pub struct PermitPolicy {
+    pub literal: String,
+    pub json: Value,
+}
+
 /// Allow or deny decision.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Decision {
-    Allow,
+    Allow { policy: PermitPolicy },
     Deny,
 }
 
-impl From<cedar_policy::Decision> for Decision {
-    fn from(decision: cedar_policy::Decision) -> Self {
+impl std::fmt::Display for Decision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Decision::Allow { policy } => write!(f, "Allow({})", policy.literal),
+            Decision::Deny => write!(f, "Deny"),
+        }
+    }
+}
+
+pub trait FromDecisionWithPolicy {
+    fn from_decision_with_policy(response: cedar_policy::Decision, policy: PermitPolicy) -> Self;
+}
+
+impl FromDecisionWithPolicy for Decision {
+    fn from_decision_with_policy(decision: cedar_policy::Decision, policy: PermitPolicy) -> Self {
         match decision {
-            cedar_policy::Decision::Allow => Decision::Allow,
+            cedar_policy::Decision::Allow => Decision::Allow { policy },
             cedar_policy::Decision::Deny => Decision::Deny,
         }
     }

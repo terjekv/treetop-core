@@ -1,0 +1,52 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"assign_gateway\",\n    resource is Gateway\n) when {\n    resource.id == \"mygateway\"\n};",
+      "json": {
+        "action": {
+          "entity": {
+            "id": "assign_gateway",
+            "type": "Action"
+          },
+          "op": "=="
+        },
+        "conditions": [
+          {
+            "body": {
+              "==": {
+                "left": {
+                  ".": {
+                    "attr": "id",
+                    "left": {
+                      "Var": "resource"
+                    }
+                  }
+                },
+                "right": {
+                  "Value": "mygateway"
+                }
+              }
+            },
+            "kind": "when"
+          }
+        ],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "alice",
+            "type": "User"
+          },
+          "op": "=="
+        },
+        "resource": {
+          "entity_type": "Gateway",
+          "op": "is"
+        }
+      }
+    }
+  }
+}

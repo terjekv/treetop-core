@@ -12,6 +12,7 @@ keywords = ["cedar", "policy", "authentication"]
 [dependencies]
 cedar-policy = { version = "4.4" }
 cedar-policy-core = "4.4"
+insta = { version = "1.43.1", features = ["json", "serde"] }
 itertools = "0.14"
 once_cell = "1.21"
 regex = "1.11"

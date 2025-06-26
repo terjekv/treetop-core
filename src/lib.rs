@@ -43,7 +43,7 @@
 //! };
 //!
 //! let decision = engine.evaluate(&request).unwrap();
-//! assert_eq!(decision, Decision::Allow);
+//! assert!(matches!(decision, Decision::Allow { .. }));
 //!
 //! // List all of alice's policies
 //! let policies = engine.list_policies_for_user("alice", vec![]).unwrap();
