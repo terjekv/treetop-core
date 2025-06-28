@@ -106,6 +106,34 @@ let policies = engine.list_policies_for_user("alice", vec![]).unwrap();
 let json = serde_json::to_string(&policies).unwrap();
 ```
 
+## Groups
+
+Groups are listed as the principal entity type `Group`, and to permit access to member of a group, you can use the `in` operator. If you say `principal in Group::"admins"`, it will match any principal that is a member of the group `admins`, but if you say `principal == Group::"admins"`, it will only match the group itself, not its members. You will almost always want to use the `in` operator when dealing with groups...
+
+```cedar
+permit (
+   principal in Group::"admins",
+   action == Action::"manage_hosts",
+   resource is Host
+)
+```
+
+This is then queried as follows in a request:
+
+```rust
+let request = Request {
+   principal: User::new("alice", None),
+   action: Action::new("manage_hosts", None),
+   groups: vec!["admins"],
+   resource: Resource::Host {
+      name: "hostname.example.com".into(),
+      ip: "10.0.0.1".parse().unwrap(),
+   },
+};
+```
+
+Note that scopes for groups have to be explicity stated in the group parameter, ala `Group::Myapp::"admins"`, as opposed to users and actions, where the scope is passed as a vector of strings during the creation of the `User` and `Action` structs.
+
 ## Passing generic resources
 
 It is impractical to hard code all relevant resource types into the policy engine. Instead, there is the option to pass a `Generic` resource into the engine, which takes two parameters, a `kind` and an `id`. This allows for more flexibility in defining resources without needing to explicitly enumerate all possible types.
@@ -138,4 +166,3 @@ Request {
 
 This allows for a querying resources that are not explicitly defined in the policy engine, but instead defined in the policy file.
 Both `id` and `kind` are passed as context, as strings, into the query. `kind` will always match the resource name.
-

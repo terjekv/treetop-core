@@ -1,7 +1,8 @@
 use cedar_policy::{
-    Authorizer, Entities, EntityUid, Policy, PolicySet, PrincipalConstraint,
+    Authorizer, Entities, Entity, EntityUid, Policy, PolicySet, PrincipalConstraint,
     Request as CedarRequest,
 };
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use crate::models::{PermitPolicy, UserPolicies};
@@ -34,6 +35,8 @@ impl PolicyEngine {
     }
 
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
+        let schema: Option<&cedar_policy::Schema> = None;
+
         debug!(
             event = "Request",
             phase = "Evaluation",
@@ -42,6 +45,7 @@ impl PolicyEngine {
             resource = request.resource.to_string(),
             groups = request.groups.to_string()
         );
+
         // 1. Turn your Atom types into EntityUids (the “P, A, R” in PARC)
         let principal: EntityUid = request.principal.cedar_entity_uid()?;
         let action: EntityUid = request.action.cedar_entity_uid()?;
@@ -59,17 +63,30 @@ impl PolicyEngine {
             context = context.to_string()
         );
 
-        println!(
-            "Cedar Request: principal = {}, action = {}, resource = {}, context = {}",
-            principal, action, resource, context
-        );
-
         // 3. Create the Cedar request
-        let cedar_req = CedarRequest::new(principal, action, resource, context, None)?;
+        let cedar_req = CedarRequest::new(principal.clone(), action, resource, context, None)?;
 
-        // 4. For now, no group‐membership facts or other entities
-        let entities = Entities::empty();
-        let entities = entities.add_entities(vec![request.resource.cedar_entity()?], None)?;
+        // 4. Create Entities for the request
+        // 4a. Create EntityUids for each group
+        let mut group_uids = HashSet::new();
+        for group in &request.groups.0 {
+            let g = group.cedar_entity_uid()?;
+            group_uids.insert(g);
+        }
+
+        // 4b. Create an Entity for the principal, with the EntityUid of those groups as parents
+        let principal_entity = Entity::new(principal.clone(), HashMap::new(), group_uids.clone())?;
+
+        // 4c. Create Entities for each group out of the EntityUids we created in 4a
+        let group_entities: Vec<Entity> = group_uids.into_iter().map(Entity::with_uid).collect();
+
+        // 5. Create the complete Entities collection, including the resource, principal, and groups
+        let entities = Entities::empty()
+            .add_entities(
+                vec![request.resource.cedar_entity()?, principal_entity],
+                schema,
+            )?
+            .add_entities(group_entities, schema)?;
 
         debug!(
             event = "Request",
@@ -77,7 +94,7 @@ impl PolicyEngine {
             entities = request.resource.cedar_entity()?.to_string()
         );
 
-        // 5. Run the authorizer
+        // 6. Run the authorizer
         let guard = self.inner.read()?;
         let result = Authorizer::new().is_authorized(&cedar_req, &guard, &entities);
 
@@ -152,6 +169,7 @@ impl PolicyEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Group;
     use crate::host_patterns::initialize_host_patterns;
     use crate::models::Groups;
     use crate::models::{
@@ -275,6 +293,20 @@ permit (
 ) when {
     resource.id == "mygateway"
 };
+"#;
+
+    const TEST_POLICY_WITH_GROUPS: &str = r#"
+permit (
+    principal in Group::"admins",
+    action in [Action::"delete", Action::"view"],
+    resource is Photo
+);
+
+permit (
+    principal in Group::"users",
+    action == Action::"view",
+    resource is Photo
+);
 "#;
 
     #[parameterized(
@@ -507,6 +539,34 @@ permit (
                 kind: "Gateway".to_string(),
                 id: resource_id.to_string(),
             },
+        };
+        let decision = engine.evaluate(&request).unwrap();
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(decision);
+        });
+    }
+
+    #[parameterized(
+        alice_delete_allow = { "alice", &["admins"], "delete" },
+        alice_view_allow = { "alice", &["admins"], "view" },
+        bob_delete_deny = { "bob", &["users"], "delete" },
+        bob_view_allow = { "bob", &["users"], "view" },
+    )]
+    fn test_policy_with_groups(user: &str, groups: &[&str], action: &str) {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_GROUPS).unwrap();
+
+        // Convert the resource to the appropriate type
+        let resource = Resource::Photo {
+            id: "photo.jpg".to_string(),
+        };
+
+        let groups: Vec<Group> = groups.iter().map(|g| Group(g.to_string())).collect();
+
+        let request = Request {
+            principal: user.into(),
+            action: action.into(),
+            groups: Groups(groups),
+            resource,
         };
         let decision = engine.evaluate(&request).unwrap();
         insta::with_settings!({sort_maps => true}, {
