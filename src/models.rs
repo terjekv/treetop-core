@@ -80,7 +80,7 @@ impl std::fmt::Display for Resource {
             Resource::Host { name, .. } => name,
             Resource::Generic { id, .. } => id,
         };
-        write!(f, "{}::\"{}\"", kind, id)
+        write!(f, "{kind}::\"{id}\"")
     }
 }
 
