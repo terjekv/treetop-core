@@ -88,9 +88,8 @@ initialize_host_patterns(vec![
 let engine = PolicyEngine::new_from_str(&policies).unwrap();
 
 let request = Request {
-   principal: User::new("alice", None), // User is not in a namespace/scope
+   principal: User::new_from_username("alice"), // User without groups, no namespace/scope
    action: Action::new("create_host", None), // Action is not in a namespace/scope
-   groups: vec![], // Groups the user belongs to
    resource: Resource::Host {
       name: "hostname.example.com".into(),
       ip: "10.0.0.1".parse().unwrap(),
@@ -122,9 +121,8 @@ This is then queried as follows in a request:
 
 ```rust
 let request = Request {
-   principal: User::new("alice", None),
+   principal: User::new_from_username("alice"),
    action: Action::new("manage_hosts", None),
-   groups: vec!["admins"],
    resource: Resource::Host {
       name: "hostname.example.com".into(),
       ip: "10.0.0.1".parse().unwrap(),
@@ -154,9 +152,8 @@ This can be queried with the following request:
 
 ```rust
 Request {
-   principal: User::new("alice", None),
+   principal: User::new_from_username("alice"),
    action: Action::new("build_house", None),
-   groups: vec![], 
    resource: Resource::Generic {
       kind: "House".into(),
       id: "house-1".into(),

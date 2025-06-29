@@ -36,6 +36,7 @@ impl PolicyEngine {
 
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
         let schema: Option<&cedar_policy::Schema> = None;
+        let groups = &request.principal.groups;
 
         debug!(
             event = "Request",
@@ -43,7 +44,7 @@ impl PolicyEngine {
             principal = request.principal.to_string(),
             action = request.action.to_string(),
             resource = request.resource.to_string(),
-            groups = request.groups.to_string()
+            groups = groups.to_string()
         );
 
         // 1. Turn your Atom types into EntityUids (the “P, A, R” in PARC)
@@ -69,7 +70,7 @@ impl PolicyEngine {
         // 4. Create Entities for the request
         // 4a. Create EntityUids for each group
         let mut group_uids = HashSet::new();
-        for group in &request.groups.0 {
+        for group in groups.clone() {
             let g = group.cedar_entity_uid()?;
             group_uids.insert(g);
         }
@@ -169,9 +170,8 @@ impl PolicyEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Group;
-    use crate::host_patterns::initialize_host_patterns;
-    use crate::models::Groups;
+    use crate::User;
+    use crate::host_name_labels::initialize_host_patterns;
     use crate::models::{
         Decision::Allow, Decision::Deny, Resource, Resource::Host, Resource::Photo,
     };
@@ -328,9 +328,8 @@ permit (
         };
 
         let request = Request {
-            principal: user.into(),
+            principal: User::new_from_username(user),
             action: action.into(),
-            groups: Groups(vec![]),
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
@@ -349,9 +348,8 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_CONTEXT).unwrap();
 
         let request = Request {
-            principal: user.into(),
+            principal: User::new_from_username(user),
             action: action.into(),
-            groups: Groups(vec![]),
             resource: Host {
                 name: host_name.into(),
                 ip: ip.parse().unwrap(),
@@ -367,9 +365,8 @@ permit (
     fn test_reload_policy() {
         let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
         let request = Request {
-            principal: "bob".into(),
+            principal: User::new_from_username("bob"),
             action: "view".into(),
-            groups: Groups(vec![]),
             resource: Photo {
                 id: "VacationPhoto94.jpg".into(),
             },
@@ -452,9 +449,8 @@ permit (
         };
 
         let request = Request {
-            principal: user.into(),
+            principal: User::new_from_username(user),
             action: action.into(),
-            groups: Groups(vec![]),
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
@@ -488,9 +484,8 @@ permit (
         ]);
 
         let request = Request {
-            principal: username.into(),
+            principal: User::new_without_groups(username, None),
             action: "create_host".into(),
-            groups: Groups(vec![]),
             resource: Host {
                 name: host_name.to_string(),
                 ip: "10.0.0.1".parse().unwrap(),
@@ -509,9 +504,8 @@ permit (
     fn test_only_here_policy(username: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_ACTION_ONLY_HERE).unwrap();
         let request = Request {
-            principal: username.into(),
+            principal: User::new_without_groups(username, None),
             action: "only_here".into(),
-            groups: Groups(vec![]),
             resource: Host {
                 name: "irrelevant.example.com".into(),
                 ip: "10.0.0.1".parse().unwrap(),
@@ -532,9 +526,8 @@ permit (
     fn test_generic_policies(user: &str, action: &str, resource_id: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_GENERIC_RESOURCE).unwrap();
         let request = Request {
-            principal: user.into(),
+            principal: User::new_without_groups(user, None),
             action: action.into(),
-            groups: Groups(vec![]),
             resource: Resource::Generic {
                 kind: "Gateway".to_string(),
                 id: resource_id.to_string(),
@@ -560,12 +553,9 @@ permit (
             id: "photo.jpg".to_string(),
         };
 
-        let groups: Vec<Group> = groups.iter().map(|g| Group(g.to_string())).collect();
-
         let request = Request {
-            principal: user.into(),
+            principal: User::new(user, groups.to_vec(), None),
             action: action.into(),
-            groups: Groups(groups),
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();

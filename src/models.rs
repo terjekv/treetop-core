@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::error::PolicyError;
-use crate::host_patterns::HOST_PATTERNS;
+use crate::host_name_labels::HOST_PATTERNS;
 use crate::traits::CedarAtom;
 
 /// The API-level request, with strongly-typed principal, action, groups, and resource.
@@ -20,7 +20,6 @@ use crate::traits::CedarAtom;
 pub struct Request {
     pub principal: User,
     pub action: Action,
-    pub groups: Groups,
     pub resource: Resource,
 }
 
@@ -189,6 +188,7 @@ impl CedarAtom for Resource {
 pub struct User {
     pub scope: Option<String>,
     pub id: String,
+    pub groups: Groups,
 }
 
 impl std::fmt::Display for User {
@@ -203,16 +203,41 @@ impl std::fmt::Display for User {
 
 impl User {
     /// Create a new user with an optional scope.
-    pub fn new<T: Into<String>>(id: T, scope: Option<Vec<String>>) -> Self {
+    pub fn new<T: Into<String>, G: Into<String>>(
+        id: T,
+        groups: Vec<G>,
+        scope: Option<Vec<String>>,
+    ) -> Self {
+        let groups = groups
+            .into_iter()
+            .map(|g| Group(g.into()))
+            .collect::<Vec<Group>>();
         User {
             scope: scope.map(|s| s.join("::")),
             id: id.into(),
+            groups: Groups(groups),
+        }
+    }
+
+    pub fn new_without_groups<T: Into<String>>(id: T, scope: Option<Vec<String>>) -> Self {
+        User {
+            scope: scope.map(|s| s.join("::")),
+            id: id.into(),
+            groups: Groups(Vec::new()),
         }
     }
 
     /// Create a new user without a scope.
-    pub fn without_scope<T: Into<String>>(id: T) -> Self {
-        User::new(id, None)
+    pub fn without_scope<T: Into<String>>(id: T, groups: Vec<String>) -> Self {
+        User::new(id, groups, None)
+    }
+
+    pub fn new_from_username<T: Into<String>>(username: T) -> Self {
+        User {
+            scope: None,
+            id: username.into(),
+            groups: Groups(Vec::new()),
+        }
     }
 }
 
@@ -234,6 +259,7 @@ where
         User {
             scope: None,
             id: v.into(),
+            groups: Groups(Vec::new()),
         }
     }
 }
@@ -296,6 +322,12 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group(pub String);
 
+impl Group {
+    pub fn new<S: AsRef<str>>(name: S) -> Self {
+        Group(name.as_ref().to_string())
+    }
+}
+
 impl CedarAtom for Group {
     fn cedar_type() -> &'static str {
         "Group"
@@ -309,10 +341,42 @@ impl CedarAtom for Group {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Groups(pub Vec<Group>);
 
+impl Groups {
+    pub fn new<I, S>(groups: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let v = groups
+            .into_iter()
+            .map(|g| Group(g.as_ref().to_string()))
+            .collect();
+        Groups(v)
+    }
+
+    /// Check if the Groups collection is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Get the number of groups in this collection.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
 impl std::fmt::Display for Groups {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let group_names: Vec<String> = self.0.iter().map(|g| g.0.clone()).collect();
         write!(f, "[{}]", group_names.join(", "))
+    }
+}
+
+impl Iterator for Groups {
+    type Item = Group;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.pop()
     }
 }
 
