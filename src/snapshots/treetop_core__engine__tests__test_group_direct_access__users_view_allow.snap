@@ -1,0 +1,33 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "permit (\n    principal in Group::\"users\",\n    action == Action::\"view\",\n    resource is Photo\n);",
+      "json": {
+        "action": {
+          "entity": {
+            "id": "view",
+            "type": "Action"
+          },
+          "op": "=="
+        },
+        "conditions": [],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "users",
+            "type": "Group"
+          },
+          "op": "in"
+        },
+        "resource": {
+          "entity_type": "Photo",
+          "op": "is"
+        }
+      }
+    }
+  }
+}

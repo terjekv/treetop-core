@@ -9,7 +9,7 @@
 //! Note that we do not require the host to have the nameLabel "webserver" for "alice" to create it.
 //!
 //! ```rust
-//! use treetop_core::{PolicyEngine, Request, Decision, User, Action, Resource, initialize_host_patterns};
+//! use treetop_core::{PolicyEngine, Request, Decision, User, Principal, Action, Resource, initialize_host_patterns};
 //! use regex::Regex;
 //!
 //! let policies = r#"
@@ -33,7 +33,7 @@
 //! let engine = PolicyEngine::new_from_str(&policies).unwrap();
 //!
 //! let request = Request {
-//!    principal: User::new_from_username("alice"), // No groups, no namespace/scope
+//!    principal: Principal::User(User::new_from_username("alice")), // No groups, no namespace/scope
 //!    action: Action::new("create_host", None), // Action is not in a namespace/scope
 //!    resource: Resource::Host {
 //!       name: "hostname.example.com".into(),
@@ -58,7 +58,7 @@ pub use engine::PolicyEngine;
 pub use error::PolicyError;
 pub use host_name_labels::initialize_host_patterns;
 pub use models::{
-    Action, Decision, Group, Groups, Request, Resource, ResourceKind, User, UserPolicies,
+    Action, Decision, Group, Groups, Principal, Request, Resource, ResourceKind, User, UserPolicies,
 };
 
 mod engine;

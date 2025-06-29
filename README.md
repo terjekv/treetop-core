@@ -65,7 +65,7 @@ permit (
 ## Code example
 
 ```rust
-use treetop_core::{PolicyEngine, Request, Decision, User, Action, initialize_host_patterns};
+use treetop_core::{PolicyEngine, Request, Decision, User, Principal, Action, initialize_host_patterns};
 use regex::Regex;
 
 let policies = r#"
@@ -88,7 +88,7 @@ initialize_host_patterns(vec![
 let engine = PolicyEngine::new_from_str(&policies).unwrap();
 
 let request = Request {
-   principal: User::new_from_username("alice"), // User without groups, no namespace/scope
+   principal: Principal::User(User::new_from_username("alice")), // User without groups, no namespace/scope
    action: Action::new("create_host", None), // Action is not in a namespace/scope
    resource: Resource::Host {
       name: "hostname.example.com".into(),
@@ -121,7 +121,7 @@ This is then queried as follows in a request:
 
 ```rust
 let request = Request {
-   principal: User::new_from_username("alice"),
+   principal: Principal::User(User::new_from_username("alice")),
    action: Action::new("manage_hosts", None),
    resource: Resource::Host {
       name: "hostname.example.com".into(),
@@ -152,7 +152,7 @@ This can be queried with the following request:
 
 ```rust
 Request {
-   principal: User::new_from_username("alice"),
+   principal: Principal::User(User::new_from_username("alice")),
    action: Action::new("build_house", None),
    resource: Resource::Generic {
       kind: "House".into(),

@@ -1,0 +1,39 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "permit (\n    principal in Group::\"admins\",\n    action in [Action::\"delete\", Action::\"view\"],\n    resource is Photo\n);",
+      "json": {
+        "action": {
+          "entities": [
+            {
+              "id": "delete",
+              "type": "Action"
+            },
+            {
+              "id": "view",
+              "type": "Action"
+            }
+          ],
+          "op": "in"
+        },
+        "conditions": [],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "admins",
+            "type": "Group"
+          },
+          "op": "in"
+        },
+        "resource": {
+          "entity_type": "Photo",
+          "op": "is"
+        }
+      }
+    }
+  }
+}

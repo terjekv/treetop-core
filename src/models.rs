@@ -15,10 +15,56 @@ use crate::error::PolicyError;
 use crate::host_name_labels::HOST_PATTERNS;
 use crate::traits::CedarAtom;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Principal {
+    User(User),
+    Group(Group),
+}
+
+impl std::fmt::Display for Principal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Principal::User(user) => write!(f, "{}", user),
+            Principal::Group(group) => write!(f, "{}", group),
+        }
+    }
+}
+
+/// Dispatch the CedarAtom trait to the correct type.
+impl CedarAtom for Principal {
+    fn cedar_entity_uid(&self) -> Result<EntityUid, PolicyError> {
+        match self {
+            Principal::User(user) => user.cedar_entity_uid(),
+            Principal::Group(group) => group.cedar_entity_uid(),
+        }
+    }
+    fn cedar_attr(&self) -> Result<HashMap<String, RestrictedExpression>, PolicyError> {
+        match self {
+            Principal::User(user) => user.cedar_attr(),
+            Principal::Group(group) => group.cedar_attr(),
+        }
+    }
+    fn cedar_ctx(&self) -> Result<Context, PolicyError> {
+        match self {
+            Principal::User(user) => user.cedar_ctx(),
+            Principal::Group(group) => group.cedar_ctx(),
+        }
+    }
+    fn cedar_type() -> &'static str {
+        "Principal"
+    }
+    fn cedar_id(&self) -> &str {
+        match self {
+            Principal::User(user) => user.cedar_id(),
+            Principal::Group(group) => group.cedar_id(),
+        }
+    }
+}
+
 /// The API-level request, with strongly-typed principal, action, groups, and resource.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
-    pub principal: User,
+    pub principal: Principal,
     pub action: Action,
     pub resource: Resource,
 }
@@ -186,15 +232,15 @@ impl CedarAtom for Resource {
 /// A user principal, possibly scoped (e.g. User::Application::"alice").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
-    pub scope: Option<String>,
     pub id: String,
     pub groups: Groups,
+    pub scope: Option<Vec<String>>,
 }
 
 impl std::fmt::Display for User {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(scope) = &self.scope {
-            write!(f, "User::{}::\"{}\"", scope, self.id)
+            write!(f, "{}::User::\"{}\"", scope.join("::"), self.id)
         } else {
             write!(f, "User::\"{}\"", self.id)
         }
@@ -208,20 +254,28 @@ impl User {
         groups: Vec<G>,
         scope: Option<Vec<String>>,
     ) -> Self {
-        let groups = groups
-            .into_iter()
-            .map(|g| Group(g.into()))
-            .collect::<Vec<Group>>();
+        let scoped_groups = if let Some(scope) = &scope {
+            groups
+                .into_iter()
+                .map(|g| Group(format!("{}::{}", scope.join("::"), g.into())))
+                .collect::<Vec<Group>>()
+        } else {
+            groups
+                .into_iter()
+                .map(|g| Group(g.into()))
+                .collect::<Vec<Group>>()
+        };
+
         User {
-            scope: scope.map(|s| s.join("::")),
+            scope,
             id: id.into(),
-            groups: Groups(groups),
+            groups: Groups(scoped_groups),
         }
     }
 
     pub fn new_without_groups<T: Into<String>>(id: T, scope: Option<Vec<String>>) -> Self {
         User {
-            scope: scope.map(|s| s.join("::")),
+            scope,
             id: id.into(),
             groups: Groups(Vec::new()),
         }
@@ -328,6 +382,12 @@ impl Group {
     }
 }
 
+impl std::fmt::Display for Group {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl CedarAtom for Group {
     fn cedar_type() -> &'static str {
         "Group"
@@ -340,6 +400,12 @@ impl CedarAtom for Group {
 /// A collection of Group entries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Groups(pub Vec<Group>);
+
+impl Default for Groups {
+    fn default() -> Self {
+        Groups(Vec::new())
+    }
+}
 
 impl Groups {
     pub fn new<I, S>(groups: I) -> Self

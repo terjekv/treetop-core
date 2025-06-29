@@ -4,9 +4,11 @@ use cedar_policy::{
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
+use std::vec;
 
 use crate::models::{PermitPolicy, UserPolicies};
 use crate::traits::CedarAtom;
+use crate::{Groups, Principal};
 use crate::{
     error::PolicyError,
     loader,
@@ -36,7 +38,11 @@ impl PolicyEngine {
 
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
         let schema: Option<&cedar_policy::Schema> = None;
-        let groups = &request.principal.groups;
+
+        let groups = match &request.principal {
+            Principal::User(user) => user.groups.clone(),
+            Principal::Group(_) => Groups::default(),
+        };
 
         debug!(
             event = "Request",
@@ -173,7 +179,7 @@ mod tests {
     use crate::User;
     use crate::host_name_labels::initialize_host_patterns;
     use crate::models::{
-        Decision::Allow, Decision::Deny, Resource, Resource::Host, Resource::Photo,
+        Decision::Allow, Decision::Deny, Group, Resource, Resource::Host, Resource::Photo,
     };
     use insta::assert_json_snapshot;
     use yare::parameterized;
@@ -328,7 +334,7 @@ permit (
         };
 
         let request = Request {
-            principal: User::new_from_username(user),
+            principal: Principal::User(User::new_from_username(user)),
             action: action.into(),
             resource,
         };
@@ -348,7 +354,7 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_CONTEXT).unwrap();
 
         let request = Request {
-            principal: User::new_from_username(user),
+            principal: Principal::User(User::new_from_username(user)),
             action: action.into(),
             resource: Host {
                 name: host_name.into(),
@@ -365,7 +371,7 @@ permit (
     fn test_reload_policy() {
         let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
         let request = Request {
-            principal: User::new_from_username("bob"),
+            principal: Principal::User(User::new_from_username("bob")),
             action: "view".into(),
             resource: Photo {
                 id: "VacationPhoto94.jpg".into(),
@@ -449,7 +455,7 @@ permit (
         };
 
         let request = Request {
-            principal: User::new_from_username(user),
+            principal: Principal::User(User::new_from_username(user)),
             action: action.into(),
             resource,
         };
@@ -484,7 +490,7 @@ permit (
         ]);
 
         let request = Request {
-            principal: User::new_without_groups(username, None),
+            principal: Principal::User(User::new_from_username(username)),
             action: "create_host".into(),
             resource: Host {
                 name: host_name.to_string(),
@@ -504,7 +510,7 @@ permit (
     fn test_only_here_policy(username: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_ACTION_ONLY_HERE).unwrap();
         let request = Request {
-            principal: User::new_without_groups(username, None),
+            principal: Principal::User(User::new_from_username(username)),
             action: "only_here".into(),
             resource: Host {
                 name: "irrelevant.example.com".into(),
@@ -526,7 +532,7 @@ permit (
     fn test_generic_policies(user: &str, action: &str, resource_id: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_GENERIC_RESOURCE).unwrap();
         let request = Request {
-            principal: User::new_without_groups(user, None),
+            principal: Principal::User(User::new_from_username(user)),
             action: action.into(),
             resource: Resource::Generic {
                 kind: "Gateway".to_string(),
@@ -554,7 +560,32 @@ permit (
         };
 
         let request = Request {
-            principal: User::new(user, groups.to_vec(), None),
+            principal: Principal::User(User::new(user, groups.to_vec(), None)),
+            action: action.into(),
+            resource,
+        };
+        let decision = engine.evaluate(&request).unwrap();
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(decision);
+        });
+    }
+
+    #[parameterized(
+        admins_delete_allow = { "admins", "delete" },
+        admins_view_allow = { "admins", "view" },
+        users_view_allow = { "users", "view" },
+        users_delete_deny = { "users", "delete" },
+    )]
+    fn test_group_direct_access(group: &str, action: &str) {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_GROUPS).unwrap();
+
+        // Convert the resource to the appropriate type
+        let resource = Resource::Photo {
+            id: "photo.jpg".to_string(),
+        };
+
+        let request = Request {
+            principal: Principal::Group(Group::new(group)),
             action: action.into(),
             resource,
         };
