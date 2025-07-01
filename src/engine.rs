@@ -315,6 +315,15 @@ permit (
 );
 "#;
 
+    const TEST_POLICY_BY_ID: &str = r#"
+@id("id_of_policy")
+permit (
+    principal == User::"alice",
+    action, 
+    resource
+);
+"#;
+
     #[parameterized(
         alice_edit_allow = { "alice", "edit", "VacationPhoto94.jpg" },
         alice_view_allow = { "alice", "view", "VacationPhoto94.jpg" },
@@ -588,6 +597,22 @@ permit (
             principal: Principal::Group(Group::new(group)),
             action: action.into(),
             resource,
+        };
+        let decision = engine.evaluate(&request).unwrap();
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(decision);
+        });
+    }
+
+    #[test]
+    fn test_policy_by_id() {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_BY_ID).unwrap();
+        let request = Request {
+            principal: Principal::User(User::new("alice", vec!["admins"], None)),
+            action: "view".into(),
+            resource: Resource::Photo {
+                id: "VacationPhoto94.jpg".to_string(),
+            },
         };
         let decision = engine.evaluate(&request).unwrap();
         insta::with_settings!({sort_maps => true}, {

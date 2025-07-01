@@ -1,0 +1,31 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "@id(\"id_of_policy\")\npermit (\n    principal == User::\"alice\",\n    action, \n    resource\n);",
+      "json": {
+        "action": {
+          "op": "All"
+        },
+        "annotations": {
+          "id": "id_of_policy"
+        },
+        "conditions": [],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "alice",
+            "type": "User"
+          },
+          "op": "=="
+        },
+        "resource": {
+          "op": "All"
+        }
+      }
+    }
+  }
+}
