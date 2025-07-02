@@ -33,8 +33,8 @@
 //! let engine = PolicyEngine::new_from_str(&policies).unwrap();
 //!
 //! let request = Request {
-//!    principal: Principal::User(User::new_from_username("alice")), // No groups, no namespace/scope
-//!    action: Action::new("create_host", None), // Action is not in a namespace/scope
+//!    principal: Principal::User(User::new("alice", None, None)), // No groups, no namespace
+//!    action: Action::new("create_host", None), // Action is not in a namespace
 //!    resource: Resource::Host {
 //!       name: "hostname.example.com".into(),
 //!       ip: "10.0.0.1".parse().unwrap(),

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::net::IpAddr;
 use std::str::FromStr;
 
@@ -21,11 +22,11 @@ pub enum Principal {
     Group(Group),
 }
 
-impl std::fmt::Display for Principal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for Principal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
-            Principal::User(user) => write!(f, "{}", user),
-            Principal::Group(group) => write!(f, "{}", group),
+            Principal::User(user) => write!(f, "{user}"),
+            Principal::Group(group) => write!(f, "{group}"),
         }
     }
 }
@@ -53,7 +54,7 @@ impl CedarAtom for Principal {
     fn cedar_type() -> &'static str {
         "Principal"
     }
-    fn cedar_id(&self) -> &str {
+    fn cedar_id(&self) -> String {
         match self {
             Principal::User(user) => user.cedar_id(),
             Principal::Group(group) => group.cedar_id(),
@@ -83,8 +84,8 @@ pub enum Decision {
     Deny,
 }
 
-impl std::fmt::Display for Decision {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for Decision {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             Decision::Allow { policy } => write!(f, "Allow({})", policy.literal),
             Decision::Deny => write!(f, "Deny"),
@@ -220,78 +221,126 @@ impl CedarAtom for Resource {
         "Resource"
     }
 
-    fn cedar_id(&self) -> &str {
+    fn cedar_id(&self) -> String {
         match self {
-            Resource::Photo { id } => id,
-            Resource::Host { name, .. } => name,
-            Resource::Generic { id, .. } => id,
+            Resource::Photo { id } => id.clone(),
+            Resource::Host { name, .. } => name.clone(),
+            Resource::Generic { id, .. } => id.clone(),
         }
     }
 }
 
-/// A user principal, possibly scoped (e.g. User::Application::"alice").
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
-    pub id: String,
-    pub groups: Groups,
-    pub scope: Option<Vec<String>>,
+/// Marker type for Users
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum UserMarker {}
+/// Marker type for Group
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GroupMarker {}
+/// Marker type for Actions
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ActionMarker {}
+
+/// A fully‐qualified identifier, with zero runtime cost over `(Vec<String>, String)`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct QualifiedId<T> {
+    id: String,
+    namespace: Vec<String>,
+    _marker: std::marker::PhantomData<T>,
 }
 
-impl std::fmt::Display for User {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(scope) = &self.scope {
-            write!(f, "{}::User::\"{}\"", scope.join("::"), self.id)
-        } else {
-            write!(f, "User::\"{}\"", self.id)
+impl<T> QualifiedId<T> {
+    /// Construct from its parts.  Guaranteed valid by signature.
+    pub fn new(id: impl Into<String>, namespace: Option<Vec<String>>) -> Self {
+        QualifiedId {
+            id: id.into(),
+            namespace: namespace.unwrap_or_default(),
+            _marker: std::marker::PhantomData,
         }
+    }
+
+    /// Get the raw id.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Get the namespace path.
+    #[allow(dead_code)]
+    pub fn namespace(&self) -> &[String] {
+        &self.namespace
+    }
+
+    /// Render as `"Ns1::Ns2::Type::"id""`.
+    pub fn fmt_qualified(&self, ty: &str) -> String {
+        let mut parts = self.namespace.join("::");
+        if !parts.is_empty() {
+            parts.push_str("::");
+        }
+        format!(
+            r#"{parts}{ty}::"{id}""#,
+            id = self.id,
+            parts = parts,
+            ty = ty
+        )
+    }
+}
+
+impl<T> Display for QualifiedId<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        // We don't know `T`'s name here; we'll implement Display on the wrappers.
+        write!(f, "{}", self.id)
+    }
+}
+
+/// A User’s fully‐qualified ID.
+pub type UserId = QualifiedId<UserMarker>;
+/// A Group’s fully‐qualified ID.
+pub type GroupId = QualifiedId<GroupMarker>;
+/// An Action’s fully‐qualified ID.
+pub type ActionId = QualifiedId<ActionMarker>;
+
+/// A user principal, possibly with a namespace (e.g. User::Application::"alice").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    id: UserId,
+    groups: Groups,
+}
+
+impl Display for User {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{}", self.id.fmt_qualified(Self::cedar_type()))
     }
 }
 
 impl User {
-    /// Create a new user with an optional scope.
-    pub fn new<T: Into<String>, G: Into<String>>(
+    /// Create a new user with optional groups and an optional namespace
+    ///
+    /// This constructor allows you to create a user with a specific ID, and optionally
+    /// assign them to one or more groups, as well as specify a namespace for the user.
+    ///
+    /// The groups will be placed in the same namespace as the user.
+    ///
+    /// ## Parameters
+    ///
+    /// - `id`: The unique identifier for the user.
+    /// - `groups`: An optional list of groups to which the user belongs.
+    /// - `namespace`: An optional namespace for the user and the groups.
+    ///
+    /// ## Returns
+    ///
+    /// A new `User` instance.
+    pub fn new<T: Into<String>>(
         id: T,
-        groups: Vec<G>,
-        scope: Option<Vec<String>>,
+        groups: Option<Vec<String>>,
+        namespace: Option<Vec<String>>,
     ) -> Self {
-        let scoped_groups = if let Some(scope) = &scope {
-            groups
-                .into_iter()
-                .map(|g| Group(format!("{}::{}", scope.join("::"), g.into())))
-                .collect::<Vec<Group>>()
-        } else {
-            groups
-                .into_iter()
-                .map(|g| Group(g.into()))
-                .collect::<Vec<Group>>()
-        };
-
         User {
-            scope,
-            id: id.into(),
-            groups: Groups(scoped_groups),
+            id: UserId::new(id, namespace.clone()),
+            groups: Groups::new(groups.unwrap_or_default(), namespace),
         }
     }
 
-    pub fn new_without_groups<T: Into<String>>(id: T, scope: Option<Vec<String>>) -> Self {
-        User {
-            scope,
-            id: id.into(),
-            groups: Groups(Vec::new()),
-        }
-    }
-
-    /// Create a new user without a scope.
-    pub fn without_scope<T: Into<String>>(id: T, groups: Vec<String>) -> Self {
-        User::new(id, groups, None)
-    }
-
-    pub fn new_from_username<T: Into<String>>(username: T) -> Self {
-        User {
-            scope: None,
-            id: username.into(),
-            groups: Groups(Vec::new()),
-        }
+    pub fn groups(&self) -> &Groups {
+        &self.groups
     }
 }
 
@@ -300,52 +349,33 @@ impl CedarAtom for User {
         "User"
     }
 
-    fn cedar_id(&self) -> &str {
-        &self.id
+    fn cedar_id(&self) -> String {
+        self.id.fmt_qualified(Self::cedar_type())
     }
 }
 
-impl<T> From<T> for User
-where
-    T: Into<String>,
-{
-    fn from(v: T) -> Self {
-        User {
-            scope: None,
-            id: v.into(),
-            groups: Groups(Vec::new()),
-        }
-    }
-}
-
-/// An action, possibly scoped (e.g. Action::Infra::"delete_vm").
+/// An action, possibly with a namespace (e.g. Action::Infra::"delete_vm").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Action {
-    pub scope: Option<String>,
-    pub id: String,
+    id: ActionId,
 }
 
-impl std::fmt::Display for Action {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(scope) = &self.scope {
-            write!(f, "Action::{}::\"{}\"", scope, self.id)
-        } else {
-            write!(f, "Action::\"{}\"", self.id)
-        }
+impl Display for Action {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{}", self.id.fmt_qualified(Self::cedar_type()))
     }
 }
 
 impl Action {
-    /// Create a new action with an optional scope.
-    pub fn new<T: Into<String>>(id: T, scope: Option<Vec<String>>) -> Self {
+    /// Create a new action with an optional namespace.
+    pub fn new<T: Into<String>>(id: T, namespace: Option<Vec<String>>) -> Self {
         Action {
-            scope: scope.map(|s| s.join("::")),
-            id: id.into(),
+            id: ActionId::new(id, namespace),
         }
     }
 
-    /// Create a new action without a scope.
-    pub fn without_scope<T: Into<String>>(id: T) -> Self {
+    /// Create a new action without a namespace.
+    pub fn without_namespace<T: Into<String>>(id: T) -> Self {
         Action::new(id, None)
     }
 }
@@ -355,8 +385,8 @@ impl CedarAtom for Action {
         "Action"
     }
 
-    fn cedar_id(&self) -> &str {
-        &self.id
+    fn cedar_id(&self) -> String {
+        self.id.fmt_qualified(Self::cedar_type())
     }
 }
 
@@ -365,26 +395,24 @@ where
     T: Into<String>,
 {
     fn from(v: T) -> Self {
-        Action {
-            scope: None,
-            id: v.into(),
-        }
+        Action::new(v, None)
     }
 }
 
 /// A group identifier (e.g. Group::"devs").
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Group(pub String);
+pub struct Group(GroupId);
 
 impl Group {
-    pub fn new<S: AsRef<str>>(name: S) -> Self {
-        Group(name.as_ref().to_string())
+    /// Create a new group with an optional namespace.
+    pub fn new<S: AsRef<str>>(name: S, namespace: Option<Vec<String>>) -> Self {
+        Group(GroupId::new(name.as_ref(), namespace))
     }
 }
 
-impl std::fmt::Display for Group {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+impl Display for Group {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{}", self.0.fmt_qualified(Self::cedar_type()))
     }
 }
 
@@ -393,29 +421,23 @@ impl CedarAtom for Group {
         "Group"
     }
 
-    fn cedar_id(&self) -> &str {
-        &self.0
+    fn cedar_id(&self) -> String {
+        self.0.fmt_qualified(Self::cedar_type())
     }
 }
 /// A collection of Group entries.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Groups(pub Vec<Group>);
-
-impl Default for Groups {
-    fn default() -> Self {
-        Groups(Vec::new())
-    }
-}
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct Groups(Vec<Group>);
 
 impl Groups {
-    pub fn new<I, S>(groups: I) -> Self
+    pub fn new<I, S>(groups: I, namespace: Option<Vec<String>>) -> Self
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
         let v = groups
             .into_iter()
-            .map(|g| Group(g.as_ref().to_string()))
+            .map(|g| Group::new(g.as_ref(), namespace.clone()))
             .collect();
         Groups(v)
     }
@@ -431,9 +453,13 @@ impl Groups {
     }
 }
 
-impl std::fmt::Display for Groups {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let group_names: Vec<String> = self.0.iter().map(|g| g.0.clone()).collect();
+impl Display for Groups {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let group_names: Vec<String> = self
+            .0
+            .iter()
+            .map(|g| g.0.clone().id().to_string())
+            .collect();
         write!(f, "[{}]", group_names.join(", "))
     }
 }

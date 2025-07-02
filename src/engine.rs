@@ -40,7 +40,7 @@ impl PolicyEngine {
         let schema: Option<&cedar_policy::Schema> = None;
 
         let groups = match &request.principal {
-            Principal::User(user) => user.groups.clone(),
+            Principal::User(user) => user.groups().clone(),
             Principal::Group(_) => Groups::default(),
         };
 
@@ -101,6 +101,8 @@ impl PolicyEngine {
             entities = request.resource.cedar_entity()?.to_string()
         );
 
+        println!("Request: {}", request.principal);
+
         // 6. Run the authorizer
         let guard = self.inner.read()?;
         let result = Authorizer::new().is_authorized(&cedar_req, &guard, &entities);
@@ -140,19 +142,19 @@ impl PolicyEngine {
     pub fn list_policies_for_user(
         &self,
         user: &str,
-        scope: Vec<String>,
+        namespace: Vec<String>,
     ) -> Result<UserPolicies, PolicyError> {
         let guard = self.inner.read()?;
         let policies = guard.policies();
 
-        // Join the user and then scope into a ::-separated string
-        let user_with_scope = if scope.is_empty() {
+        // Join the user and then namespace into a ::-separated string
+        let user_with_namespace = if namespace.is_empty() {
             format!("User::\"{user}\"")
         } else {
-            format!("User::\"{}\"::{}", scope.join("::"), user)
+            format!("User::\"{}\"::{}", namespace.join("::"), user)
         };
 
-        let uid: EntityUid = user_with_scope.parse()?;
+        let uid: EntityUid = user_with_namespace.parse()?;
 
         let mut matching_policies: Vec<Policy> = Vec::new();
 
@@ -176,11 +178,11 @@ impl PolicyEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::User;
     use crate::host_name_labels::initialize_host_patterns;
     use crate::models::{
         Decision::Allow, Decision::Deny, Group, Resource, Resource::Host, Resource::Photo,
     };
+    use crate::{Action, User};
     use insta::assert_json_snapshot;
     use yare::parameterized;
 
@@ -324,6 +326,26 @@ permit (
 );
 "#;
 
+    const TEST_POLICY_WITH_NAMESPACES: &str = r#"
+permit (
+    principal == Database::User::"alice",
+    action in [Database::Action::"create_table", Database::Action::"view_table"],
+    resource is Database::Table
+);
+
+permit (
+    principal in Database::Group::"dbusers",
+    action == Database::Action::"view_table",
+    resource is Database::Table
+);
+
+permit (
+    principal in Furniture::Group::"carpenters",
+    action == Furniture::Action::"create_table",
+    resource is Furniture::Table
+);
+"#;
+
     #[parameterized(
         alice_edit_allow = { "alice", "edit", "VacationPhoto94.jpg" },
         alice_view_allow = { "alice", "view", "VacationPhoto94.jpg" },
@@ -343,7 +365,7 @@ permit (
         };
 
         let request = Request {
-            principal: Principal::User(User::new_from_username(user)),
+            principal: Principal::User(User::new(user, None, None)),
             action: action.into(),
             resource,
         };
@@ -363,7 +385,7 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_CONTEXT).unwrap();
 
         let request = Request {
-            principal: Principal::User(User::new_from_username(user)),
+            principal: Principal::User(User::new(user, None, None)),
             action: action.into(),
             resource: Host {
                 name: host_name.into(),
@@ -380,7 +402,7 @@ permit (
     fn test_reload_policy() {
         let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
         let request = Request {
-            principal: Principal::User(User::new_from_username("bob")),
+            principal: Principal::User(User::new("bob", None, None)),
             action: "view".into(),
             resource: Photo {
                 id: "VacationPhoto94.jpg".into(),
@@ -400,13 +422,13 @@ permit (
     )]
     fn test_list_permissions(
         user: &str,
-        scope: Vec<String>,
+        namespaces: Vec<String>,
         expected_policies: usize,
         expected_actions: Vec<&str>,
     ) {
         let engine = PolicyEngine::new_from_str(TEST_PERMISSION_POLICY).unwrap();
         let user_policies = engine
-            .list_policies_for_user(user, scope)
+            .list_policies_for_user(user, namespaces)
             .expect("Failed to list permissions");
         assert_eq!(user_policies.policies().len(), expected_policies);
 
@@ -464,7 +486,7 @@ permit (
         };
 
         let request = Request {
-            principal: Principal::User(User::new_from_username(user)),
+            principal: Principal::User(User::new(user, None, None)),
             action: action.into(),
             resource,
         };
@@ -499,7 +521,7 @@ permit (
         ]);
 
         let request = Request {
-            principal: Principal::User(User::new_from_username(username)),
+            principal: Principal::User(User::new(username, None, None)),
             action: "create_host".into(),
             resource: Host {
                 name: host_name.to_string(),
@@ -519,7 +541,7 @@ permit (
     fn test_only_here_policy(username: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_ACTION_ONLY_HERE).unwrap();
         let request = Request {
-            principal: Principal::User(User::new_from_username(username)),
+            principal: Principal::User(User::new(username, None, None)),
             action: "only_here".into(),
             resource: Host {
                 name: "irrelevant.example.com".into(),
@@ -541,7 +563,7 @@ permit (
     fn test_generic_policies(user: &str, action: &str, resource_id: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_GENERIC_RESOURCE).unwrap();
         let request = Request {
-            principal: Principal::User(User::new_from_username(user)),
+            principal: Principal::User(User::new(user, None, None)),
             action: action.into(),
             resource: Resource::Generic {
                 kind: "Gateway".to_string(),
@@ -555,12 +577,12 @@ permit (
     }
 
     #[parameterized(
-        alice_delete_allow = { "alice", &["admins"], "delete" },
-        alice_view_allow = { "alice", &["admins"], "view" },
-        bob_delete_deny = { "bob", &["users"], "delete" },
-        bob_view_allow = { "bob", &["users"], "view" },
+        alice_delete_allow = { "alice", "admins", "delete" },
+        alice_view_allow = { "alice", "admins", "view" },
+        bob_delete_deny = { "bob", "users", "delete" },
+        bob_view_allow = { "bob", "users", "view" },
     )]
-    fn test_policy_with_groups(user: &str, groups: &[&str], action: &str) {
+    fn test_policy_with_groups(user: &str, group: &str, action: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_GROUPS).unwrap();
 
         // Convert the resource to the appropriate type
@@ -569,7 +591,7 @@ permit (
         };
 
         let request = Request {
-            principal: Principal::User(User::new(user, groups.to_vec(), None)),
+            principal: Principal::User(User::new(user, Some(vec![group.to_string()]), None)),
             action: action.into(),
             resource,
         };
@@ -594,10 +616,11 @@ permit (
         };
 
         let request = Request {
-            principal: Principal::Group(Group::new(group)),
+            principal: Principal::Group(Group::new(group, None)),
             action: action.into(),
             resource,
         };
+
         let decision = engine.evaluate(&request).unwrap();
         insta::with_settings!({sort_maps => true}, {
             assert_json_snapshot!(decision);
@@ -608,12 +631,41 @@ permit (
     fn test_policy_by_id() {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_BY_ID).unwrap();
         let request = Request {
-            principal: Principal::User(User::new("alice", vec!["admins"], None)),
+            principal: Principal::User(User::new("alice", Some(vec!["admins".to_string()]), None)),
             action: "view".into(),
             resource: Resource::Photo {
                 id: "VacationPhoto94.jpg".to_string(),
             },
         };
+        let decision = engine.evaluate(&request).unwrap();
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(decision);
+        });
+    }
+
+    #[parameterized(
+        alice_namespace_database_create_allow = { "alice", "create_table", "dbusers", "Database" },
+        bob_namespace_database_create_deny = { "bob", "create_table", "dbusers", "Database" },
+        bob_namespace_database_view_allow = { "bob", "view_table", "dbusers", "Database" },
+        bob_namespace_furniture_allow = { "bob", "create_table", "carpenters", "Furniture" },
+        alice_namespace_furniture_deny = { "alice", "create_table", "spectators", "Furniture" },
+
+    )]
+    fn test_namespaces(user: &str, action: &str, group: &str, namespace: &str) {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_NAMESPACES).unwrap();
+        let request = Request {
+            principal: Principal::User(User::new(
+                user,
+                Some(vec![group.to_string()]),
+                Some(vec![namespace.to_string()]),
+            )),
+            action: Action::new(action, Some(vec![namespace.to_string()])),
+            resource: Resource::Generic {
+                id: "mytable".to_string(),
+                kind: format!("{}::{}", namespace, "Table"),
+            },
+        };
+
         let decision = engine.evaluate(&request).unwrap();
         insta::with_settings!({sort_maps => true}, {
             assert_json_snapshot!(decision);

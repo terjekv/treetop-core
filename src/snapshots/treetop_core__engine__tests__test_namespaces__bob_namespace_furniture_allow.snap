@@ -1,0 +1,33 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "permit (\n    principal in Furniture::Group::\"carpenters\",\n    action == Furniture::Action::\"create_table\",\n    resource is Furniture::Table\n);",
+      "json": {
+        "action": {
+          "entity": {
+            "id": "create_table",
+            "type": "Furniture::Action"
+          },
+          "op": "=="
+        },
+        "conditions": [],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "carpenters",
+            "type": "Furniture::Group"
+          },
+          "op": "in"
+        },
+        "resource": {
+          "entity_type": "Furniture::Table",
+          "op": "is"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "permit (\n    principal in Database::Group::\"dbusers\",\n    action == Database::Action::\"view_table\",\n    resource is Database::Table\n);",
+      "json": {
+        "action": {
+          "entity": {
+            "id": "view_table",
+            "type": "Database::Action"
+          },
+          "op": "=="
+        },
+        "conditions": [],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "dbusers",
+            "type": "Database::Group"
+          },
+          "op": "in"
+        },
+        "resource": {
+          "entity_type": "Database::Table",
+          "op": "is"
+        }
+      }
+    }
+  }
+}

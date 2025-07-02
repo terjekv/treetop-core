@@ -88,8 +88,8 @@ initialize_host_patterns(vec![
 let engine = PolicyEngine::new_from_str(&policies).unwrap();
 
 let request = Request {
-   principal: Principal::User(User::new_from_username("alice")), // User without groups, no namespace/scope
-   action: Action::new("create_host", None), // Action is not in a namespace/scope
+   principal: Principal::User(User::new("alice", None, None)), // User without groups, no namespace
+   action: Action::new("create_host", None), // Action is not in a namespace
    resource: Resource::Host {
       name: "hostname.example.com".into(),
       ip: "10.0.0.1".parse().unwrap(),
@@ -121,7 +121,7 @@ This is then queried as follows in a request:
 
 ```rust
 let request = Request {
-   principal: Principal::User(User::new_from_username("alice")),
+   principal: Principal::User(User::new("alice", None, None)),
    action: Action::new("manage_hosts", None),
    resource: Resource::Host {
       name: "hostname.example.com".into(),
@@ -130,7 +130,7 @@ let request = Request {
 };
 ```
 
-Note that scopes for groups have to be explicity stated in the group parameter, ala `Group::Myapp::"admins"`, as opposed to users and actions, where the scope is passed as a vector of strings during the creation of the `User` and `Action` structs.
+Note that namespaces for groups are inherited from vector of namespaces passed during creation of the `User` struct. This implies that you cannot use different namespaces for groups and users in the same query.
 
 ## Passing generic resources
 
@@ -152,7 +152,7 @@ This can be queried with the following request:
 
 ```rust
 Request {
-   principal: Principal::User(User::new_from_username("alice")),
+   principal: Principal::User(User::new("alice", None, None)),
    action: Action::new("build_house", None),
    resource: Resource::Generic {
       kind: "House".into(),

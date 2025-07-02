@@ -1,0 +1,39 @@
+---
+source: src/engine.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "permit (\n    principal == Database::User::\"alice\",\n    action in [Database::Action::\"create_table\", Database::Action::\"view_table\"],\n    resource is Database::Table\n);",
+      "json": {
+        "action": {
+          "entities": [
+            {
+              "id": "create_table",
+              "type": "Database::Action"
+            },
+            {
+              "id": "view_table",
+              "type": "Database::Action"
+            }
+          ],
+          "op": "in"
+        },
+        "conditions": [],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "alice",
+            "type": "Database::User"
+          },
+          "op": "=="
+        },
+        "resource": {
+          "entity_type": "Database::Table",
+          "op": "is"
+        }
+      }
+    }
+  }
+}
