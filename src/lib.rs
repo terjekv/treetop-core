@@ -66,4 +66,5 @@ mod error;
 mod host_name_labels;
 mod loader;
 mod models;
+mod tests;
 mod traits;

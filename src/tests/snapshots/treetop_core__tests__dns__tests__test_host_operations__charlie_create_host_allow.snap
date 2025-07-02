@@ -1,0 +1,50 @@
+---
+source: src/tests/dns.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "@id(\"DNS.admins_policy\")\npermit (\n    principal in DNS::Group::\"admins\",\n    action in\n        [DNS::Action::\"create_host\",\n         DNS::Action::\"delete_host\",\n         DNS::Action::\"view_host\",\n         DNS::Action::\"edit_host\"],\n    resource is Host\n);",
+      "json": {
+        "action": {
+          "entities": [
+            {
+              "id": "create_host",
+              "type": "DNS::Action"
+            },
+            {
+              "id": "delete_host",
+              "type": "DNS::Action"
+            },
+            {
+              "id": "view_host",
+              "type": "DNS::Action"
+            },
+            {
+              "id": "edit_host",
+              "type": "DNS::Action"
+            }
+          ],
+          "op": "in"
+        },
+        "annotations": {
+          "id": "DNS.admins_policy"
+        },
+        "conditions": [],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "admins",
+            "type": "DNS::Group"
+          },
+          "op": "in"
+        },
+        "resource": {
+          "entity_type": "Host",
+          "op": "is"
+        }
+      }
+    }
+  }
+}

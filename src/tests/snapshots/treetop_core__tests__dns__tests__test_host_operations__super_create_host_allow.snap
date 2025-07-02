@@ -1,0 +1,31 @@
+---
+source: src/tests/dns.rs
+expression: decision
+---
+{
+  "Allow": {
+    "policy": {
+      "literal": "@id(\"global.super_admin_allow_all_policy\")\npermit (\n    principal == User::\"super\",\n    action,\n    resource\n);",
+      "json": {
+        "action": {
+          "op": "All"
+        },
+        "annotations": {
+          "id": "global.super_admin_allow_all_policy"
+        },
+        "conditions": [],
+        "effect": "permit",
+        "principal": {
+          "entity": {
+            "id": "super",
+            "type": "User"
+          },
+          "op": "=="
+        },
+        "resource": {
+          "op": "All"
+        }
+      }
+    }
+  }
+}
