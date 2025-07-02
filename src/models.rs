@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::marker::PhantomData;
 use std::net::IpAddr;
 use std::str::FromStr;
 
@@ -116,8 +117,8 @@ pub enum Resource {
     Generic { kind: String, id: String },
 }
 
-impl std::fmt::Display for Resource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for Resource {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         // Turn &self into its discriminant:
         let kind = ResourceKind::from(self).to_string();
         // Pick the right “id” field for each variant:
@@ -147,7 +148,7 @@ impl CedarAtom for Resource {
     }
 
     fn cedar_attr(&self) -> Result<HashMap<String, RestrictedExpression>, PolicyError> {
-        let mut attrs = std::collections::HashMap::new();
+        let mut attrs = HashMap::new();
         match self {
             Resource::Photo { id } => {
                 attrs.insert(
@@ -245,7 +246,7 @@ pub enum ActionMarker {}
 pub struct QualifiedId<T> {
     id: String,
     namespace: Vec<String>,
-    _marker: std::marker::PhantomData<T>,
+    _marker: PhantomData<T>,
 }
 
 impl<T> QualifiedId<T> {
@@ -254,7 +255,7 @@ impl<T> QualifiedId<T> {
         QualifiedId {
             id: id.into(),
             namespace: namespace.unwrap_or_default(),
-            _marker: std::marker::PhantomData,
+            _marker: PhantomData,
         }
     }
 
