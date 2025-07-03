@@ -387,12 +387,12 @@ impl FromStr for User {
         };
 
         let expected = Self::cedar_type();
-        if let Some(type_part) = parts.type_part
-            && type_part != expected
-        {
-            return Err(PolicyError::InvalidFormat(format!(
-                "Expected type `{expected}`, found `{type_part}` in `{s}`"
-            )));
+        if let Some(type_part) = parts.type_part {
+            if type_part != expected {
+                return Err(PolicyError::InvalidFormat(format!(
+                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
+                )));
+            }
         }
 
         Ok(User::new(parts.id, groups, parts.namespace))
@@ -442,12 +442,12 @@ impl FromStr for Action {
         let parts = split_string_into_cedar_parts(s)?;
 
         let expected = Self::cedar_type();
-        if let Some(type_part) = parts.type_part
-            && type_part != expected
-        {
-            return Err(PolicyError::InvalidFormat(format!(
-                "Expected type `{expected}`, found `{type_part}` in `{s}`"
-            )));
+        if let Some(type_part) = parts.type_part {
+            if type_part != expected {
+                return Err(PolicyError::InvalidFormat(format!(
+                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
+                )));
+            }
         }
 
         Ok(Action::new(parts.id, parts.namespace))
@@ -498,12 +498,12 @@ impl FromStr for Group {
         let parts = split_string_into_cedar_parts(s)?;
 
         let expected = Self::cedar_type();
-        if let Some(type_part) = parts.type_part
-            && type_part != expected
-        {
-            return Err(PolicyError::InvalidFormat(format!(
-                "Expected type `{expected}`, found `{type_part}` in `{s}`"
-            )));
+        if let Some(type_part) = parts.type_part {
+            if type_part != expected {
+                return Err(PolicyError::InvalidFormat(format!(
+                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
+                )));
+            }
         }
 
         Ok(Group::new(parts.id, parts.namespace))
