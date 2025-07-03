@@ -63,6 +63,8 @@ mod tests {
     #[parameterized(
         alice_create_host_allow = { "alice", "create_host" },
         alice_delete_host_allow = { "alice", "delete_host" },
+        // Alice is allowed view_hosts as a member of both "admin" and of "user"
+        alice_allow_view_host = { "alice", "view_host" }, 
         bob_create_host_deny = { "bob", "create_host" },
         bob_delete_host_deny = { "bob", "delete_host" },
         bob_view_host_allow = { "bob", "view_host" },   
