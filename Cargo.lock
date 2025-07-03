@@ -115,13 +115,12 @@ dependencies = [
 
 [[package]]
 name = "cedar-policy"
-version = "4.4.1"
+version = "4.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1d37df3afde553492d8413d02a733e86a786c29f5b36c6d8d72bc6e5c0c7f63"
+checksum = "c3a73fdc6a5127276075a8c559a0dee47d2b66aa823daef349a36e5a03e95624"
 dependencies = [
  "cedar-policy-core",
  "cedar-policy-formatter",
- "cedar-policy-validator",
  "itertools",
  "lalrpop-util",
  "lazy_static",
@@ -138,9 +137,9 @@ dependencies = [
 
 [[package]]
 name = "cedar-policy-core"
-version = "4.4.1"
+version = "4.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd896075d493e8283e960c94cf85d85773dc3359cf948a5f5ea88a6f249e8665"
+checksum = "7dda1924b69cc47f602d839782f3a9c5369f545897276c20fec9e2026562142e"
 dependencies = [
  "chrono",
  "educe",
@@ -160,13 +159,14 @@ dependencies = [
  "smol_str",
  "stacker",
  "thiserror",
+ "unicode-security",
 ]
 
 [[package]]
 name = "cedar-policy-formatter"
-version = "4.4.1"
+version = "4.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95db50a024d5ed3efe4b9b513124b564313716ada017860c17995ec227ab46b1"
+checksum = "75b7998a24f7bf11f26224457a49c8cb5eacf42be780c2ad91f86b5b10f7c393"
 dependencies = [
  "cedar-policy-core",
  "itertools",
@@ -176,30 +176,6 @@ dependencies = [
  "pretty",
  "regex",
  "smol_str",
-]
-
-[[package]]
-name = "cedar-policy-validator"
-version = "4.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f40762e669e4ec5a4b3a2b3d3aa2567d768aa74b735760f13197312c1150f69"
-dependencies = [
- "cedar-policy-core",
- "educe",
- "itertools",
- "lalrpop",
- "lalrpop-util",
- "lazy_static",
- "miette",
- "nonempty",
- "ref-cast",
- "serde",
- "serde_json",
- "serde_with",
- "smol_str",
- "stacker",
- "thiserror",
- "unicode-security",
 ]
 
 [[package]]
@@ -482,9 +458,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.9.0"
+version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cea70ddb795996207ad57735b50c5982d8844f38ba9ee5f1aedcfb708a2aa11e"
+checksum = "fe4cd85333e22411419a0bcae1297d25e58c9443848b11dc6a86fefe8c78a661"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.4",
@@ -726,7 +702,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
 dependencies = [
  "fixedbitset",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
 ]
 
 [[package]]
@@ -910,6 +886,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "schemars"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1375ba8ef45a6f15d83fa8748f1079428295d403d6ea991d09ab100155fbc06d"
+dependencies = [
+ "dyn-clone",
+ "ref-cast",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -947,7 +935,7 @@ version = "1.0.140"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20068b6e96dc6c9bd23e01df8827e6c7e1f2fddd43c21810382803c136b99373"
 dependencies = [
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "itoa",
  "memchr",
  "ryu",
@@ -956,16 +944,17 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.13.0"
+version = "3.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf65a400f8f66fb7b0552869ad70157166676db75ed8181f8104ea91cf9d0b42"
+checksum = "f2c45cd61fefa9db6f254525d46e392b852e0e61d9a1fd36e5bd183450a556d5"
 dependencies = [
  "base64",
  "chrono",
  "hex",
  "indexmap 1.9.3",
- "indexmap 2.9.0",
- "schemars",
+ "indexmap 2.10.0",
+ "schemars 0.9.0",
+ "schemars 1.0.3",
  "serde",
  "serde_derive",
  "serde_json",
@@ -975,9 +964,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.13.0"
+version = "3.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81679d9ed988d5e9a5e6531dc3f2c28efbd639cbd1dfb628df08edea6004da77"
+checksum = "de90945e6565ce0d9a25098082ed4ee4002e047cb59892c318d66821e14bb30f"
 dependencies = [
  "darling",
  "proc-macro2",
