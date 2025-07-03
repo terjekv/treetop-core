@@ -27,6 +27,12 @@ pub enum PolicyError {
 
     #[error("Poisoned lock error: {0}")]
     PoisonedLockError(String),
+
+    #[error("QualifiedId error: {0}")]
+    QualifiedIdError(String),
+
+    #[error("Invalid format: {0}")]
+    InvalidFormat(String),
 }
 
 impl From<RequestValidationError> for PolicyError {

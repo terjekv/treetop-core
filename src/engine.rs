@@ -67,7 +67,8 @@ impl PolicyEngine {
             principal = principal.to_string(),
             action = action.to_string(),
             resource = resource.to_string(),
-            context = context.to_string()
+            context = context.to_string(),
+            groups = groups.to_string()
         );
 
         // 3. Create the Cedar request
@@ -98,10 +99,13 @@ impl PolicyEngine {
         debug!(
             event = "Request",
             phase = "Entities",
-            entities = request.resource.cedar_entity()?.to_string()
+            entities = entities
+                .iter()
+                .map(|e| format!("[{}]", e.to_string()))
+                .collect::<Vec<_>>()
+                .join(", ")
+                .replace('\n', "")
         );
-
-        println!("Request: {}", request.principal);
 
         // 6. Run the authorizer
         let guard = self.inner.read()?;

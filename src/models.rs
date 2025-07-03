@@ -355,6 +355,44 @@ impl CedarAtom for User {
     }
 }
 
+impl FromStr for User {
+    type Err = PolicyError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (user_part, groups_part) = if let Some(idx) = s.find('[') {
+            let (left, right) = s.split_at(idx);
+            (left.trim(), Some(right.trim()))
+        } else {
+            (s.trim(), None)
+        };
+
+        let (id, type_part, namespace) = split_string_into_cedar_parts(user_part)?;
+
+        // If there are groups, parse them
+        let groups = if let Some(groups_str) = groups_part {
+            let groups_str = groups_str.trim_matches(|c| c == '[' || c == ']');
+            let groups: Vec<String> = groups_str
+                .split(',')
+                .map(|g| g.trim().to_string())
+                .collect();
+            Some(groups)
+        } else {
+            None
+        };
+
+        let expected = Self::cedar_type();
+        if let Some(type_part) = type_part {
+            if type_part != expected {
+                return Err(PolicyError::InvalidFormat(format!(
+                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
+                )));
+            }
+        }
+
+        Ok(User::new(id, groups, namespace))
+    }
+}
+
 /// An action, possibly with a namespace (e.g. Action::Infra::"delete_vm").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Action {
@@ -391,12 +429,32 @@ impl CedarAtom for Action {
     }
 }
 
+impl FromStr for Action {
+    type Err = PolicyError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (id, type_part, namespace) = split_string_into_cedar_parts(s)?;
+
+        let expected = Self::cedar_type();
+        if let Some(type_part) = type_part {
+            if type_part != expected {
+                return Err(PolicyError::InvalidFormat(format!(
+                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
+                )));
+            }
+        }
+
+        Ok(Action::new(id, namespace))
+    }
+}
+
 impl<T> From<T> for Action
 where
     T: Into<String>,
 {
     fn from(v: T) -> Self {
-        Action::new(v, None)
+        let v = v.into();
+        Action::from_str(&v).unwrap_or_else(|_| Action::new(v, None))
     }
 }
 
@@ -426,6 +484,26 @@ impl CedarAtom for Group {
         self.0.fmt_qualified(Self::cedar_type())
     }
 }
+
+impl FromStr for Group {
+    type Err = PolicyError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (id, type_part, namespace) = split_string_into_cedar_parts(s)?;
+
+        let expected = Self::cedar_type();
+        if let Some(type_part) = type_part {
+            if type_part != expected {
+                return Err(PolicyError::InvalidFormat(format!(
+                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
+                )));
+            }
+        }
+
+        Ok(Group::new(id, namespace))
+    }
+}
+
 /// A collection of Group entries.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Groups(Vec<Group>);
@@ -558,4 +636,25 @@ impl Serialize for UserPolicies {
         s.serialize_field("policies", &policies_as_json)?;
         s.end()
     }
+}
+
+pub fn split_string_into_cedar_parts(
+    s: &str,
+) -> Result<(&str, Option<&str>, Option<Vec<String>>), PolicyError> {
+    let parts: Vec<&str> = s.split("::").collect();
+    if parts.len() == 1 {
+        return Ok((parts[0], None, None));
+    }
+
+    // last segment should be `"id"`, it may be quoted, if so, strip the quotes
+    let id = parts.last().unwrap().trim_matches('"');
+    let type_part = parts[parts.len() - 2];
+
+    // everything before that is the namespace
+    let namespace = parts[..parts.len() - 2]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    Ok((id, Some(type_part), Some(namespace)))
 }
