@@ -32,6 +32,12 @@ impl Display for Principal {
     }
 }
 
+struct CedarParts<'a> {
+    id: &'a str,
+    type_part: Option<String>,
+    namespace: Option<Vec<String>>,
+}
+
 /// Dispatch the CedarAtom trait to the correct type.
 impl CedarAtom for Principal {
     fn cedar_entity_uid(&self) -> Result<EntityUid, PolicyError> {
@@ -366,7 +372,7 @@ impl FromStr for User {
             (s.trim(), None)
         };
 
-        let (id, type_part, namespace) = split_string_into_cedar_parts(user_part)?;
+        let parts = split_string_into_cedar_parts(user_part)?;
 
         // If there are groups, parse them
         let groups = if let Some(groups_str) = groups_part {
@@ -381,15 +387,15 @@ impl FromStr for User {
         };
 
         let expected = Self::cedar_type();
-        if let Some(type_part) = type_part {
-            if type_part != expected {
-                return Err(PolicyError::InvalidFormat(format!(
-                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
-                )));
-            }
+        if let Some(type_part) = parts.type_part
+            && type_part != expected
+        {
+            return Err(PolicyError::InvalidFormat(format!(
+                "Expected type `{expected}`, found `{type_part}` in `{s}`"
+            )));
         }
 
-        Ok(User::new(id, groups, namespace))
+        Ok(User::new(parts.id, groups, parts.namespace))
     }
 }
 
@@ -433,18 +439,18 @@ impl FromStr for Action {
     type Err = PolicyError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (id, type_part, namespace) = split_string_into_cedar_parts(s)?;
+        let parts = split_string_into_cedar_parts(s)?;
 
         let expected = Self::cedar_type();
-        if let Some(type_part) = type_part {
-            if type_part != expected {
-                return Err(PolicyError::InvalidFormat(format!(
-                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
-                )));
-            }
+        if let Some(type_part) = parts.type_part
+            && type_part != expected
+        {
+            return Err(PolicyError::InvalidFormat(format!(
+                "Expected type `{expected}`, found `{type_part}` in `{s}`"
+            )));
         }
 
-        Ok(Action::new(id, namespace))
+        Ok(Action::new(parts.id, parts.namespace))
     }
 }
 
@@ -489,18 +495,18 @@ impl FromStr for Group {
     type Err = PolicyError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (id, type_part, namespace) = split_string_into_cedar_parts(s)?;
+        let parts = split_string_into_cedar_parts(s)?;
 
         let expected = Self::cedar_type();
-        if let Some(type_part) = type_part {
-            if type_part != expected {
-                return Err(PolicyError::InvalidFormat(format!(
-                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
-                )));
-            }
+        if let Some(type_part) = parts.type_part
+            && type_part != expected
+        {
+            return Err(PolicyError::InvalidFormat(format!(
+                "Expected type `{expected}`, found `{type_part}` in `{s}`"
+            )));
         }
 
-        Ok(Group::new(id, namespace))
+        Ok(Group::new(parts.id, parts.namespace))
     }
 }
 
@@ -638,12 +644,14 @@ impl Serialize for UserPolicies {
     }
 }
 
-pub fn split_string_into_cedar_parts(
-    s: &str,
-) -> Result<(&str, Option<&str>, Option<Vec<String>>), PolicyError> {
+fn split_string_into_cedar_parts(s: &str) -> Result<CedarParts<'_>, PolicyError> {
     let parts: Vec<&str> = s.split("::").collect();
     if parts.len() == 1 {
-        return Ok((parts[0], None, None));
+        return Ok(CedarParts {
+            id: parts[0],
+            type_part: None,
+            namespace: None,
+        });
     }
 
     // last segment should be `"id"`, it may be quoted, if so, strip the quotes
@@ -656,5 +664,131 @@ pub fn split_string_into_cedar_parts(
         .map(|s| s.to_string())
         .collect();
 
-    Ok((id, Some(type_part), Some(namespace)))
+    Ok(CedarParts {
+        id,
+        type_part: Some(type_part.to_string()),
+        namespace: Some(namespace),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use yare::parameterized;
+
+    use super::*;
+
+    fn quote_last_element(s: &str) -> String {
+        let target = if s.contains("::") {
+            let parts: Vec<&str> = s.split("::").collect();
+            let last_part = parts.last().unwrap().trim_matches('"');
+            format!("{}::\"{}\"", parts[..parts.len() - 1].join("::"), last_part)
+        } else {
+            s.to_string()
+        };
+        target
+    }
+
+    #[parameterized(
+        alice_unquoted_without_namespace = {
+            "User::alice", CedarParts { id: "alice", type_part: Some("User".to_string()), namespace: Some(vec![]) } },
+        alice_unquoted_with_namespace = {
+            "Infra::User::alice", CedarParts { id: "alice", type_part: Some("User".to_string()), namespace: Some(vec!["Infra".to_string()]) } },
+        alice_unquoted_with_multiple_namespaces = {
+            "Infra::Core::User::alice", CedarParts { id: "alice", type_part: Some("User".to_string()), namespace: Some(vec!["Infra".to_string(), "Core".to_string()]) } },
+        alice_quoted = {
+            "User::\"alice\"", CedarParts { id: "alice", type_part: Some("User".to_string()), namespace: Some(vec![]) } },
+        alice_quoted_with_namespace = {
+            "Infra::User::\"alice\"", CedarParts { id: "alice", type_part: Some("User".to_string()), namespace: Some(vec!["Infra".to_string()]) } },
+        alice_quoted_with_multiple_namespaces = {
+            "Infra::Core::User::\"alice\"", CedarParts { id: "alice", type_part: Some("User".to_string()), namespace: Some(vec!["Infra".to_string(), "Core".to_string()]) } },
+
+    )]
+
+    fn test_split_string_into_cedar_parts(str: &str, expected: CedarParts) {
+        let result = split_string_into_cedar_parts(str).unwrap();
+        assert_eq!(result.id, expected.id);
+        assert_eq!(result.type_part, expected.type_part);
+        assert_eq!(result.namespace, expected.namespace);
+    }
+
+    #[parameterized(
+        alice = { "User::alice", "alice", None, None },
+        alice_with_groups = { "User::alice[admins,users]", "alice", Some(vec!["admins".to_string(), "users".to_string()]), None },
+        alice_with_namespace = { "Infra::User::alice", "alice", None, Some(vec!["Infra".to_string()]) },
+        alice_with_multiple_namespaces = { "Infra::Core::User::alice", "alice", None, Some(vec!["Infra".to_string(), "Core".to_string()]) },
+        alice_with_groups_and_namespace = { "Infra::User::alice[admins,users]", "alice", Some(vec!["admins".to_string(), "users".to_string()]), Some(vec!["Infra".to_string()]) },
+    )]
+    fn test_user_from_str(
+        user_str: &str,
+        expected_id: &str,
+        expected_groups: Option<Vec<String>>,
+        expected_namespace: Option<Vec<String>>,
+    ) {
+        let user = User::from_str(user_str).unwrap();
+
+        let target = if user_str.contains("[") {
+            // Drop everything after the first `[` to remove groups
+            user_str.split('[').next().unwrap().trim()
+        } else {
+            user_str.trim()
+        };
+
+        assert_eq!(user.id.fmt_qualified("User"), quote_last_element(target));
+
+        assert_eq!(user.id.id(), expected_id);
+        assert_eq!(
+            user.groups
+                .0
+                .iter()
+                .map(|g| g.0.id().to_string())
+                .collect::<Vec<_>>(),
+            expected_groups.unwrap_or_default()
+        );
+        assert_eq!(
+            user.id.namespace(),
+            expected_namespace.as_deref().unwrap_or(&vec![])
+        );
+    }
+
+    #[parameterized(
+        action_unquoted_without_namespace = { "Action::create_host", "create_host" },
+        action_unquoted_with_namespace = { "Infra::Action::create_host", "create_host" },
+        action_unquoted_with_multiple_namespaces = { "Infra::Core::Action::create_host", "create_host" },
+        action_quoted = { "Action::\"create_host\"", "create_host" },
+        action_quoted_with_namespace = { "Infra::Action::\"create_host\"", "create_host" },
+        action_quoted_with_multiple_namespaces = { "Infra::Core::Action::\"create_host\"", "create_host" },
+    )]
+    fn test_action_from_str(action_str: &str, expected_id: &str) {
+        let action = Action::from_str(action_str).unwrap();
+        assert_eq!(action.id.id(), expected_id);
+        assert_eq!(
+            action.id.fmt_qualified("Action"),
+            quote_last_element(action_str)
+        );
+    }
+
+    #[parameterized(
+        group_unquoted_without_namespace = { "Group::admins", "admins", None },
+        group_unquoted_with_namespace = { "Infra::Group::admins", "admins", Some(vec!["Infra".to_string()]) },
+        group_unquoted_with_multiple_namespaces = { "Infra::Core::Group::admins", "admins", Some(vec!["Infra".to_string(), "Core".to_string()]) },
+        group_quoted = { "Group::\"admins\"", "admins", None },
+        group_quoted_with_namespace = { "Infra::Group::\"admins\"", "admins", Some(vec!["Infra".to_string()]) },
+        group_quoted_with_multiple_namespaces = { "Infra::Core::Group::\"admins\"", "admins", Some(vec!["Infra".to_string(), "Core".to_string()]) },
+    )]
+    fn test_group_from_str(
+        group_str: &str,
+        expected_id: &str,
+        expected_namespace: Option<Vec<String>>,
+    ) {
+        let group = Group::from_str(group_str).unwrap();
+        assert_eq!(group.0.id(), expected_id);
+        assert_eq!(
+            group.0.fmt_qualified("Group"),
+            quote_last_element(group_str)
+        );
+        assert_eq!(
+            group.0.namespace(),
+            expected_namespace.as_deref().unwrap_or(&vec![])
+        );
+    }
 }

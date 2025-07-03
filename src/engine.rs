@@ -101,7 +101,7 @@ impl PolicyEngine {
             phase = "Entities",
             entities = entities
                 .iter()
-                .map(|e| format!("[{}]", e.to_string()))
+                .map(|e| format!("[{e}]"))
                 .collect::<Vec<_>>()
                 .join(", ")
                 .replace('\n', "")
