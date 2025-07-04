@@ -1191,7 +1191,7 @@ dependencies = [
 
 [[package]]
 name = "treetop-core"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "cedar-policy",
  "cedar-policy-core",
