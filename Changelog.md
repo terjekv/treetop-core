@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Proper namespace support.
+- Add `from_str` for `Action`, `Group`, and `User` to allow the creation from strings. For `Group` and `Action` the format is the canonical form, e.g. `<Namespaces::>Group::"group_name"` and `<Namespaces::>Action::"action_name"`, while for `User` you may also add unquoted groups bracketed by `[]` and seperated by comma (`,`) at the end, e.g. `User::"alice"[admins,users]`. For all input, quoting of the identity element is optional, so you may also use `User::alice`, `Group::admins`, or `DNS::Action::create_host`.
+
+### Changed
+
+- Updated Cedar to version [4.5](https://github.com/cedar-policy/cedar/releases/tag/v4.5.0). From a consumer perspective, the major change is support for [trailing commas](https://github.com/cedar-policy/rfcs/blob/main/text/0071-trailing-commas.md) in Cedar policies.
 
 ## 0.0.5 - 2025-06-28
 
