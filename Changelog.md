@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- [utoipa](https://docs.rs/utoipa/latest/utoipa/) [ToSchema](https://docs.rs/utoipa/latest/utoipa/derive.ToSchema.html) support for types that are exported from the crate, such as `Request` and all the types it itself uses. This allows consumer libraries to use these types directly in their API, as they are already serializable, and now also get OpenAPI documentation via Utoipa.
+
 ## 0.0.6 - 2025-07-04
 
 ### Added

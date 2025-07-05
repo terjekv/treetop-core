@@ -17,7 +17,10 @@ use crate::error::PolicyError;
 use crate::host_name_labels::HOST_PATTERNS;
 use crate::traits::CedarAtom;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use utoipa::ToSchema;
+
+/// A principal for a policy query.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub enum Principal {
     User(User),
     Group(Group),
@@ -70,7 +73,7 @@ impl CedarAtom for Principal {
 }
 
 /// The API-level request, with strongly-typed principal, action, groups, and resource.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Request {
     pub principal: Principal,
     pub action: Action,
@@ -78,14 +81,14 @@ pub struct Request {
 }
 
 /// A permit policy that permitted a specific action on a resource.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default, ToSchema)]
 pub struct PermitPolicy {
     pub literal: String,
     pub json: Value,
 }
 
 /// Allow or deny decision.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 pub enum Decision {
     Allow { policy: PermitPolicy },
     Deny,
@@ -114,13 +117,22 @@ impl FromDecisionWithPolicy for Decision {
 }
 
 /// A resource in our domain.
-#[derive(Debug, Clone, Serialize, Deserialize, EnumDiscriminants)]
+#[derive(Debug, Clone, Serialize, Deserialize, EnumDiscriminants, ToSchema)]
 #[strum_discriminants(name(ResourceKind), derive(EnumString, Display))]
 #[strum(serialize_all = "PascalCase")]
 pub enum Resource {
-    Photo { id: String },
-    Host { name: String, ip: IpAddr },
-    Generic { kind: String, id: String },
+    Photo {
+        id: String,
+    },
+    Host {
+        name: String,
+        #[schema(value_type = String)]
+        ip: IpAddr,
+    },
+    Generic {
+        kind: String,
+        id: String,
+    },
 }
 
 impl Display for Resource {
@@ -238,20 +250,21 @@ impl CedarAtom for Resource {
 }
 
 /// Marker type for Users
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub enum UserMarker {}
 /// Marker type for Group
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub enum GroupMarker {}
 /// Marker type for Actions
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub enum ActionMarker {}
 
 /// A fully‐qualified identifier, with zero runtime cost over `(Vec<String>, String)`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub struct QualifiedId<T> {
     id: String,
     namespace: Vec<String>,
+    #[serde(skip)]
     _marker: PhantomData<T>,
 }
 
@@ -305,8 +318,8 @@ pub type GroupId = QualifiedId<GroupMarker>;
 /// An Action’s fully‐qualified ID.
 pub type ActionId = QualifiedId<ActionMarker>;
 
-/// A user principal, possibly with a namespace (e.g. User::Application::"alice").
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A user principal, possibly with a namespace (e.g. Application::User::"alice").
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct User {
     id: UserId,
     groups: Groups,
@@ -387,6 +400,7 @@ impl FromStr for User {
         };
 
         let expected = Self::cedar_type();
+        #[allow(clippy::collapsible_if)] // https://github.com/rust-lang/rust/issues/53667
         if let Some(type_part) = parts.type_part {
             if type_part != expected {
                 return Err(PolicyError::InvalidFormat(format!(
@@ -399,8 +413,8 @@ impl FromStr for User {
     }
 }
 
-/// An action, possibly with a namespace (e.g. Action::Infra::"delete_vm").
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// An action, possibly with a namespace (e.g. Infra::Action::"delete_vm").
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Action {
     id: ActionId,
 }
@@ -442,6 +456,7 @@ impl FromStr for Action {
         let parts = split_string_into_cedar_parts(s)?;
 
         let expected = Self::cedar_type();
+        #[allow(clippy::collapsible_if)] // https://github.com/rust-lang/rust/issues/53667
         if let Some(type_part) = parts.type_part {
             if type_part != expected {
                 return Err(PolicyError::InvalidFormat(format!(
@@ -465,7 +480,7 @@ where
 }
 
 /// A group identifier (e.g. Group::"devs").
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Group(GroupId);
 
 impl Group {
@@ -498,6 +513,7 @@ impl FromStr for Group {
         let parts = split_string_into_cedar_parts(s)?;
 
         let expected = Self::cedar_type();
+        #[allow(clippy::collapsible_if)] // https://github.com/rust-lang/rust/issues/53667
         if let Some(type_part) = parts.type_part {
             if type_part != expected {
                 return Err(PolicyError::InvalidFormat(format!(
@@ -511,7 +527,7 @@ impl FromStr for Group {
 }
 
 /// A collection of Group entries.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Groups(Vec<Group>);
 
 impl Groups {
