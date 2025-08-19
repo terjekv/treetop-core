@@ -368,6 +368,16 @@ permit (
 );
 "#;
 
+    const TEST_POLICY_WITH_IP: &str = r#"
+permit (
+    principal == User::"alice",
+    action == Action::"create_host",
+    resource is Host
+) when {
+    resource.ip.isInRange(ip("192.168.0.0/24"))
+};
+"#;
+
     #[parameterized(
         alice_edit_allow = { "alice", "edit", "VacationPhoto94.jpg" },
         alice_view_allow = { "alice", "view", "VacationPhoto94.jpg" },
@@ -675,5 +685,46 @@ permit (
         insta::with_settings!({sort_maps => true}, {
             assert_json_snapshot!(decision);
         });
+    }
+
+    #[parameterized(
+        alice_ip_allow_1 = { "192.168.0.1" },
+        alice_ip_allow_255 = { "192.168.0.255" },
+        alice_ip_deny_wrong_net = { "10.0.0.1" },
+        alice_ip_allow_same_network = { "192.168.0.0/24" }, // The same network is OK
+        alice_ip_deny_largernetwork = { "192.168.0.0/23" }, // A larger network is NOT OK
+        alice_ip_allow_subnet_of_network = { "192.168.0.0/25" } // A smaller subnet is OK
+
+
+    )]
+    fn test_ip_functionality(ip: &str) {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_IP).unwrap();
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("create_host", None),
+            resource: Resource::new("Host", "host.example.com".to_string())
+                .with_attr("ip", AttrValue::Ip(ip.to_string())),
+        };
+
+        let decision = engine.evaluate(&request).unwrap();
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(decision);
+        });
+    }
+
+    #[parameterized(
+        alice_ip_err_not_ip = { "not.an.ip.address" },
+        alice_ip_err_empty = { "" },
+    )]
+    fn test_ip_functionality_errors(ip: &str) {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_IP).unwrap();
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("create_host", None),
+            resource: Resource::new("Host", "host.example.com".to_string())
+                .with_attr("ip", AttrValue::Ip(ip.to_string())),
+        };
+
+        assert!(engine.evaluate(&request).is_err());
     }
 }
