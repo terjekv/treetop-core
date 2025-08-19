@@ -9,8 +9,9 @@
 //! Note that we do not require the host to have the nameLabel "webserver" for "alice" to create it.
 //!
 //! ```rust
-//! use treetop_core::{Action, AttrValue, PolicyEngine, Request, Decision, User, Principal, Resource, RegexLabeler, register_labeler};
 //! use regex::Regex;
+//! use std::sync::Arc;
+//! use treetop_core::{Action, AttrValue, PolicyEngine, Request, Decision, User, Principal, Resource, RegexLabeler, LABEL_REGISTRY};
 //!
 //! let policies = r#"
 //! permit (
@@ -29,12 +30,12 @@
 //!     ("in_domain".to_string(), Regex::new(r"example\.com$").unwrap()),
 //!     ("webserver".to_string(), Regex::new(r"^web-\d+").unwrap()),
 //! ];
-//! register_labeler(RegexLabeler::new(
+//! LABEL_REGISTRY.load(vec![Arc::new(RegexLabeler::new(
 //!     "Host",
 //!     "name",
 //!     "nameLabels",
 //!     patterns.into_iter().collect(),
-//! ));
+//! ))]);
 //!
 //! let engine = PolicyEngine::new_from_str(&policies).unwrap();
 //!
@@ -61,7 +62,7 @@
 
 pub use engine::PolicyEngine;
 pub use error::PolicyError;
-pub use labels::{Labeler, RegexLabeler, register_labeler};
+pub use labels::{LABEL_REGISTRY, Labeler, RegexLabeler};
 pub use models::{
     Action, AttrValue, Decision, Group, Groups, Principal, Request, Resource, User, UserPolicies,
 };

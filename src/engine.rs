@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::vec;
 
-use crate::labels::apply_all_labels;
+use crate::labels::LABEL_REGISTRY;
 use crate::models::{PermitPolicy, UserPolicies};
 use crate::traits::CedarAtom;
 use crate::{Groups, Principal};
@@ -56,7 +56,7 @@ impl PolicyEngine {
 
         // resource is &request.resource; take a working copy so we can mutate attrs with labels
         let mut resource_dyn = request.resource.clone();
-        apply_all_labels(&mut resource_dyn);
+        LABEL_REGISTRY.apply(&mut resource_dyn);
 
         // Build resource entity from the (now augmented) attrs
 
@@ -200,7 +200,7 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use crate::labels::{RegexLabeler, register_labeler};
+    use crate::labels::{LABEL_REGISTRY, RegexLabeler};
     use crate::models::AttrValue;
     use crate::models::{Decision::Allow, Decision::Deny, Group, Resource};
     use crate::{Action, User};
@@ -533,12 +533,10 @@ permit (
                 Regex::new(r"example\.com$").unwrap(),
             ),
         ];
-        register_labeler(RegexLabeler::new(
-            "Host",
-            "name",
-            "nameLabels",
-            patterns.into_iter().collect(),
-        ));
+        let labeler =
+            RegexLabeler::new("Host", "name", "nameLabels", patterns.into_iter().collect());
+
+        LABEL_REGISTRY.load(vec![Arc::new(labeler)]);
 
         let request = Request {
             principal: Principal::User(User::new(username, None, None)),

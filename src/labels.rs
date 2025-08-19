@@ -1,6 +1,7 @@
+use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::{sync::Arc, sync::RwLock};
+use std::sync::Arc;
 
 use crate::models::{AttrValue, Resource};
 
@@ -65,16 +66,26 @@ impl Labeler for RegexLabeler {
     }
 }
 
-static LABELERS: Lazy<RwLock<Vec<Arc<dyn Labeler>>>> = Lazy::new(|| RwLock::new(Vec::new()));
-
-pub fn register_labeler<L: Labeler + 'static>(l: L) {
-    LABELERS.write().unwrap().push(Arc::new(l));
+pub struct LabelRegistry {
+    inner: ArcSwap<Vec<Arc<dyn Labeler>>>,
 }
 
-pub fn apply_all_labels(res: &mut Resource) {
-    for l in LABELERS.read().unwrap().iter() {
-        if l.applies_to(&res.kind()) {
-            l.apply(res);
+impl LabelRegistry {
+    pub fn apply(&self, res: &mut Resource) {
+        let snapshot = self.inner.load();
+        let kind_owned = res.kind().to_owned();
+        for l in snapshot.iter() {
+            if l.applies_to(&kind_owned) {
+                l.apply(res);
+            }
         }
     }
+
+    pub fn load(&self, labelers: Vec<Arc<dyn Labeler>>) {
+        self.inner.store(Arc::new(labelers));
+    }
 }
+
+pub static LABEL_REGISTRY: Lazy<LabelRegistry> = Lazy::new(|| LabelRegistry {
+    inner: ArcSwap::from_pointee(Vec::new()),
+});
