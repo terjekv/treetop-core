@@ -65,44 +65,51 @@ permit (
 ## Code example
 
 ```rust
-use treetop_core::{PolicyEngine, Request, Decision, User, Principal, Action, initialize_host_patterns};
-use regex::Regex;
+ use regex::Regex;
+ use std::sync::Arc;
+ use treetop_core::{Action, AttrValue, PolicyEngine, Request, Decision, User, Principal, Resource, RegexLabeler, LABEL_REGISTRY};
 
-let policies = r#"
-permit (
-   principal == User::"alice",
-   action == Action::"create_host",
-   resource is Host
-) when {
-    resource.nameLabels.contains("in_domain") &&
-    resource.ip.isInRange(ip("10.0.0.0/24")) &&
-    resource.name like "*n*"
-};
-"#;
+ let policies = r#"
+ permit (
+    principal == User::"alice",
+    action == Action::"create_host",
+    resource is Host
+ ) when {
+     resource.nameLabels.contains("in_domain") &&
+     resource.ip.isInRange(ip("10.0.0.0/24")) &&
+     resource.name like "*n*"
+ };
+ "#;
 
-initialize_host_patterns(vec![
-   ("in_domain".to_string(), Regex::new(r"example\.com$").unwrap()),
-   ("webserver".to_string(), Regex::new(r"^web-\d+").unwrap())
-]);
+ // Used to create attributes for hosts based on their names.
+ let patterns = vec![
+     ("in_domain".to_string(), Regex::new(r"example\.com$").unwrap()),
+     ("webserver".to_string(), Regex::new(r"^web-\d+").unwrap()),
+ ];
+ LABEL_REGISTRY.load(vec![Arc::new(RegexLabeler::new(
+     "Host",
+     "name",
+     "nameLabels",
+     patterns.into_iter().collect(),
+ ))]);
 
-let engine = PolicyEngine::new_from_str(&policies).unwrap();
+ let engine = PolicyEngine::new_from_str(&policies).unwrap();
 
-let request = Request {
-   principal: Principal::User(User::new("alice", None, None)), // User without groups, no namespace
-   action: Action::new("create_host", None), // Action is not in a namespace
-   resource: Resource::Host {
-      name: "hostname.example.com".into(),
-      ip: "10.0.0.1".parse().unwrap(),
-   },
-};
+ let request = Request {
+    principal: Principal::User(User::new("alice", None, None)), // No groups, no namespace
+    action: Action::new("create_host", None), // Action is not in a namespace
+    resource: Resource::new("Host", "hostname.example.com")
+     .with_attr("name", AttrValue::String("hostname.example.com".into()))
+     .with_attr("ip", AttrValue::Ip("10.0.0.1".into()))
+ };
 
-let decision = engine.evaluate(&request).unwrap();
-assert_eq!(decision, Decision::Allow);
+ let decision = engine.evaluate(&request).unwrap();
+ assert!(matches!(decision, Decision::Allow { .. }));
 
-// List all of alice's policies
-let policies = engine.list_policies_for_user("alice", vec![]).unwrap();
-// This value is also seralizable to JSON
-let json = serde_json::to_string(&policies).unwrap();
+ // List all of alice's policies
+ let policies = engine.list_policies_for_user("alice", vec![]).unwrap();
+ // This value is also seralizable to JSON
+ let json = serde_json::to_string(&policies).unwrap();
 ```
 
 ## Groups
@@ -123,18 +130,15 @@ This is then queried as follows in a request:
 let request = Request {
    principal: Principal::User(User::new("alice", None, None)),
    action: Action::new("manage_hosts", None),
-   resource: Resource::Host {
-      name: "hostname.example.com".into(),
-      ip: "10.0.0.1".parse().unwrap(),
-   },
+   resource: Resource::new("Host", "hostname.example.com")
+    .with_attr("name", AttrValue::String("hostname.example.com".into()))
+    .with_attr("ip", AttrValue::Ip("10.0.0.1".into()))
 };
 ```
 
 Note that namespaces for groups are inherited from vector of namespaces passed during creation of the `User` struct. This implies that you cannot use different namespaces for groups and users in the same query.
 
-## Passing generic resources
-
-It is impractical to hard code all relevant resource types into the policy engine. Instead, there is the option to pass a `Generic` resource into the engine, which takes two parameters, a `kind` and an `id`. This allows for more flexibility in defining resources without needing to explicitly enumerate all possible types.
+## Another example
 
 Imagine the following policy:
 
@@ -154,12 +158,6 @@ This can be queried with the following request:
 Request {
    principal: Principal::User(User::new("alice", None, None)),
    action: Action::new("build_house", None),
-   resource: Resource::Generic {
-      kind: "House".into(),
-      id: "house-1".into(),
-   },
+   resource: Resource::new("House", "house-1")
 };
 ```
-
-This allows for a querying resources that are not explicitly defined in the policy engine, but instead defined in the policy file.
-Both `id` and `kind` are passed as context, as strings, into the query. `kind` will always match the resource name.
