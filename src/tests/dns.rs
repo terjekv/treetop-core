@@ -4,7 +4,10 @@ mod tests {
 
     use yare::parameterized;
 
-    use crate::{Action, Decision, Principal, Request, Resource, User, engine::PolicyEngine};
+    use crate::{
+        Action, Decision, Principal, Request, Resource, User, engine::PolicyEngine,
+        models::AttrValue,
+    };
 
     const DNS_POLICY: &str = include_str!("../../testdata/dns.cedar");
     const NAMESPACE: &str = "DNS";
@@ -80,10 +83,9 @@ mod tests {
         let request = Request {
             principal: Principal::User(user),
             action: action.into(),
-            resource: Resource::Host {
-                name: "hostname.example.com".into(),
-                ip: "192.0.2.1".parse().unwrap(),
-            },
+            resource: Resource::new("Host", "hostname.example.com")
+                .with_attr("name", AttrValue::String("hostname.example.com".into()))
+                .with_attr("ip", AttrValue::Ip("192.0.2.1".into())),
         };
 
         let decision = engine.evaluate(&request).unwrap();
@@ -103,10 +105,9 @@ mod tests {
         let request = Request {
             principal: Principal::User(user),
             action: action.into(),
-            resource: Resource::Host {
-                name: "hostname.example.com".into(),
-                ip: "192.0.2.1".parse().unwrap(),
-            },
+            resource: Resource::new("Host", "hostname.example.com")
+                .with_attr("name", AttrValue::String("hostname.example.com".into()))
+                .with_attr("ip", AttrValue::Ip("192.0.2.1".into())),
         };
         let decision = engine.evaluate(&request).unwrap();
         assert_ne!(decision, Decision::Deny);

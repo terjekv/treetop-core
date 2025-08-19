@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::vec;
 
+use crate::labels::LABEL_REGISTRY;
 use crate::models::{PermitPolicy, UserPolicies};
 use crate::traits::CedarAtom;
 use crate::{Groups, Principal};
@@ -53,10 +54,17 @@ impl PolicyEngine {
             groups = groups.to_string()
         );
 
+        // resource is &request.resource; take a working copy so we can mutate attrs with labels
+        let mut resource_dyn = request.resource.clone();
+        LABEL_REGISTRY.apply(&mut resource_dyn);
+
+        // Build resource entity from the (now augmented) attrs
+
         // 1. Turn your Atom types into EntityUids (the “P, A, R” in PARC)
         let principal: EntityUid = request.principal.cedar_entity_uid()?;
         let action: EntityUid = request.action.cedar_entity_uid()?;
-        let resource: EntityUid = request.resource.cedar_entity_uid()?;
+        let resource: EntityUid = resource_dyn.cedar_entity_uid()?;
+        let resource_attrs = resource_dyn.cedar_attr()?;
 
         // 2. Build an Context from the resource, this may be empty.
         let context = request.resource.cedar_ctx()?;
@@ -68,8 +76,12 @@ impl PolicyEngine {
             action = action.to_string(),
             resource = resource.to_string(),
             context = context.to_string(),
-            groups = groups.to_string()
+            groups = groups.to_string(),
+            attrs = ?resource_attrs
         );
+
+        let resource_entity =
+            cedar_policy::Entity::new(resource.clone(), resource_attrs, Default::default())?;
 
         // 3. Create the Cedar request
         let cedar_req = CedarRequest::new(principal.clone(), action, resource, context, None)?;
@@ -91,7 +103,11 @@ impl PolicyEngine {
         // 5. Create the complete Entities collection, including the resource, principal, and groups
         let entities = Entities::empty()
             .add_entities(
-                vec![request.resource.cedar_entity()?, principal_entity],
+                vec![
+                    resource_dyn.cedar_entity()?,
+                    principal_entity,
+                    resource_entity,
+                ],
                 schema,
             )?
             .add_entities(group_entities, schema)?;
@@ -181,13 +197,15 @@ impl PolicyEngine {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
-    use crate::host_name_labels::initialize_host_patterns;
-    use crate::models::{
-        Decision::Allow, Decision::Deny, Group, Resource, Resource::Host, Resource::Photo,
-    };
+    use crate::labels::{LABEL_REGISTRY, RegexLabeler};
+    use crate::models::AttrValue;
+    use crate::models::{Decision::Allow, Decision::Deny, Group, Resource};
     use crate::{Action, User};
     use insta::assert_json_snapshot;
+    use regex::Regex;
     use yare::parameterized;
 
     const TEST_POLICY: &str = r#"
@@ -364,9 +382,8 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
 
         // Convert the resource to the appropriate type
-        let resource = Resource::Photo {
-            id: resource.to_string(),
-        };
+        let resource = Resource::new("Photo", resource.to_string())
+            .with_attr("name", AttrValue::String(resource.to_string()));
 
         let request = Request {
             principal: Principal::User(User::new(user, None, None)),
@@ -391,10 +408,9 @@ permit (
         let request = Request {
             principal: Principal::User(User::new(user, None, None)),
             action: action.into(),
-            resource: Host {
-                name: host_name.into(),
-                ip: ip.parse().unwrap(),
-            },
+            resource: Resource::new("Host", host_name)
+                .with_attr("name", AttrValue::String(host_name.into()))
+                .with_attr("ip", AttrValue::Ip(ip.into())),
         };
         let decision = engine.evaluate(&request).unwrap();
         insta::with_settings!({sort_maps => true}, {
@@ -408,9 +424,7 @@ permit (
         let request = Request {
             principal: Principal::User(User::new("bob", None, None)),
             action: "view".into(),
-            resource: Photo {
-                id: "VacationPhoto94.jpg".into(),
-            },
+            resource: Resource::from_str("Photo::VacationPhoto94.jpg").unwrap(),
         };
 
         assert!(matches!(engine.evaluate(&request).unwrap(), Allow { .. }));
@@ -485,9 +499,8 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_FORBID).unwrap();
 
         // Convert the resource to the appropriate type
-        let resource = Resource::Photo {
-            id: resource.to_string(),
-        };
+        let resource = Resource::new("Photo", resource.to_string())
+            .with_attr("name", AttrValue::String(resource.to_string()));
 
         let request = Request {
             principal: Principal::User(User::new(user, None, None)),
@@ -513,25 +526,26 @@ permit (
     )]
     fn test_policy_with_host_patterns(username: &str, host_name: &str) {
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_HOST_PATTERNS).unwrap();
-        initialize_host_patterns(vec![
-            (
-                "valid_web_name".to_string(),
-                regex::Regex::new(r"^web.*").unwrap(),
-            ),
+        let patterns = vec![
+            ("valid_web_name".to_string(), Regex::new(r"^web.*").unwrap()),
             (
                 "example_domain".to_string(),
-                regex::Regex::new(r"example\.com$").unwrap(),
+                Regex::new(r"example\.com$").unwrap(),
             ),
-        ]);
+        ];
+        let labeler =
+            RegexLabeler::new("Host", "name", "nameLabels", patterns.into_iter().collect());
+
+        LABEL_REGISTRY.load(vec![Arc::new(labeler)]);
 
         let request = Request {
             principal: Principal::User(User::new(username, None, None)),
             action: "create_host".into(),
-            resource: Host {
-                name: host_name.to_string(),
-                ip: "10.0.0.1".parse().unwrap(),
-            },
+            resource: Resource::new("Host", host_name.to_string())
+                .with_attr("name", AttrValue::String(host_name.into()))
+                .with_attr("ip", AttrValue::Ip("10.0.0.1".into())),
         };
+
         let decision = engine.evaluate(&request).unwrap();
         insta::with_settings!({sort_maps => true}, {
             assert_json_snapshot!(decision);
@@ -547,10 +561,9 @@ permit (
         let request = Request {
             principal: Principal::User(User::new(username, None, None)),
             action: "only_here".into(),
-            resource: Host {
-                name: "irrelevant.example.com".into(),
-                ip: "10.0.0.1".parse().unwrap(),
-            },
+            resource: Resource::new("Photo", "irrelevant_photo.jpg")
+                .with_attr("name", AttrValue::String("irrelevant.example.com".into()))
+                .with_attr("ip", AttrValue::Ip("10.0.0.1".into())),
         };
 
         let decision = engine.evaluate(&request).unwrap();
@@ -569,10 +582,7 @@ permit (
         let request = Request {
             principal: Principal::User(User::new(user, None, None)),
             action: action.into(),
-            resource: Resource::Generic {
-                kind: "Gateway".to_string(),
-                id: resource_id.to_string(),
-            },
+            resource: Resource::new("Gateway", resource_id.to_string()),
         };
         let decision = engine.evaluate(&request).unwrap();
         insta::with_settings!({sort_maps => true}, {
@@ -590,9 +600,7 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_GROUPS).unwrap();
 
         // Convert the resource to the appropriate type
-        let resource = Resource::Photo {
-            id: "photo.jpg".to_string(),
-        };
+        let resource = Resource::new("Photo", "photo.jpg".to_string());
 
         let request = Request {
             principal: Principal::User(User::new(user, Some(vec![group.to_string()]), None)),
@@ -615,9 +623,7 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_GROUPS).unwrap();
 
         // Convert the resource to the appropriate type
-        let resource = Resource::Photo {
-            id: "photo.jpg".to_string(),
-        };
+        let resource = Resource::new("Photo", "photo.jpg".to_string());
 
         let request = Request {
             principal: Principal::Group(Group::new(group, None)),
@@ -637,9 +643,7 @@ permit (
         let request = Request {
             principal: Principal::User(User::new("alice", Some(vec!["admins".to_string()]), None)),
             action: "view".into(),
-            resource: Resource::Photo {
-                id: "VacationPhoto94.jpg".to_string(),
-            },
+            resource: Resource::new("Photo", "VacationPhoto94.jpg".to_string()),
         };
         let decision = engine.evaluate(&request).unwrap();
         insta::with_settings!({sort_maps => true}, {
@@ -664,10 +668,7 @@ permit (
                 Some(vec![namespace.to_string()]),
             )),
             action: Action::new(action, Some(vec![namespace.to_string()])),
-            resource: Resource::Generic {
-                id: "mytable".to_string(),
-                kind: format!("{}::{}", namespace, "Table"),
-            },
+            resource: Resource::new(format!("{}::{}", namespace, "Table"), "mytable".to_string()),
         };
 
         let decision = engine.evaluate(&request).unwrap();
