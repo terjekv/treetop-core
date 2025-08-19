@@ -9,7 +9,7 @@
 //! Note that we do not require the host to have the nameLabel "webserver" for "alice" to create it.
 //!
 //! ```rust
-//! use treetop_core::{PolicyEngine, Request, Decision, User, Principal, Action, Resource, initialize_host_patterns};
+//! use treetop_core::{Action, AttrValue, PolicyEngine, Request, Decision, User, Principal, Resource, RegexLabeler, register_labeler};
 //! use regex::Regex;
 //!
 //! let policies = r#"
@@ -25,20 +25,25 @@
 //! "#;
 //!
 //! // Used to create attributes for hosts based on their names.
-//! initialize_host_patterns(vec![
-//!    ("in_domain".to_string(), Regex::new(r"example\.com$").unwrap()),
-//!    ("webserver".to_string(), Regex::new(r"^web-\d+").unwrap())
-//! ]);
+//! let patterns = vec![
+//!     ("in_domain".to_string(), Regex::new(r"example\.com$").unwrap()),
+//!     ("webserver".to_string(), Regex::new(r"^web-\d+").unwrap()),
+//! ];
+//! register_labeler(RegexLabeler::new(
+//!     "Host",
+//!     "name",
+//!     "nameLabels",
+//!     patterns.into_iter().collect(),
+//! ));
 //!
 //! let engine = PolicyEngine::new_from_str(&policies).unwrap();
 //!
 //! let request = Request {
 //!    principal: Principal::User(User::new("alice", None, None)), // No groups, no namespace
 //!    action: Action::new("create_host", None), // Action is not in a namespace
-//!    resource: Resource::Host {
-//!       name: "hostname.example.com".into(),
-//!       ip: "10.0.0.1".parse().unwrap(),
-//!    },
+//!    resource: Resource::new("Host", "hostname.example.com")
+//!     .with_attr("name", AttrValue::String("hostname.example.com".into()))
+//!     .with_attr("ip", AttrValue::Ip("10.0.0.1".into()))
 //! };
 //!
 //! let decision = engine.evaluate(&request).unwrap();
@@ -56,14 +61,14 @@
 
 pub use engine::PolicyEngine;
 pub use error::PolicyError;
-pub use host_name_labels::initialize_host_patterns;
+pub use labels::{Labeler, RegexLabeler, register_labeler};
 pub use models::{
-    Action, Decision, Group, Groups, Principal, Request, Resource, ResourceKind, User, UserPolicies,
+    Action, AttrValue, Decision, Group, Groups, Principal, Request, Resource, User, UserPolicies,
 };
 
 mod engine;
 mod error;
-mod host_name_labels;
+mod labels;
 mod loader;
 mod models;
 mod tests;

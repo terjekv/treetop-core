@@ -1,11 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::marker::PhantomData;
-use std::net::IpAddr;
 use std::str::FromStr;
 
 use itertools::Itertools;
-use strum_macros::{Display, EnumDiscriminants, EnumString};
 
 use cedar_policy::{ActionConstraint, Context, EntityUid, Policy, RestrictedExpression};
 
@@ -14,7 +12,6 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::error::PolicyError;
-use crate::host_name_labels::HOST_PATTERNS;
 use crate::traits::CedarAtom;
 
 use utoipa::ToSchema;
@@ -72,14 +69,13 @@ impl CedarAtom for Principal {
     }
 }
 
-/// The API-level request, with strongly-typed principal, action, groups, and resource.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// The API-level request, with strongly-typed principal, action, groups, resource, and context.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Request {
     pub principal: Principal,
     pub action: Action,
     pub resource: Resource,
 }
-
 /// A permit policy that permitted a specific action on a resource.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default, ToSchema)]
 pub struct PermitPolicy {
@@ -116,136 +112,122 @@ impl FromDecisionWithPolicy for Decision {
     }
 }
 
-/// A resource in our domain.
-#[derive(Debug, Clone, Serialize, Deserialize, EnumDiscriminants, ToSchema)]
-#[strum_discriminants(name(ResourceKind), derive(EnumString, Display))]
-#[strum(serialize_all = "PascalCase")]
-pub enum Resource {
-    Photo {
-        id: String,
-    },
-    Host {
-        name: String,
-        #[schema(value_type = String)]
-        ip: IpAddr,
-    },
-    Generic {
-        kind: String,
-        id: String,
-    },
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(tag = "t", content = "v")]
+pub enum AttrValue {
+    String(String),
+    Bool(bool),
+    Long(i64),
+    Ip(String),
+    #[schema(no_recursion)]
+    Set(Vec<AttrValue>), // typically Set<String>; we accept nested AttrValue for convenience
+}
+
+impl AttrValue {
+    pub fn to_re(&self) -> RestrictedExpression {
+        use RestrictedExpression as RE;
+        match self {
+            AttrValue::String(s) => RE::new_string(s.clone()),
+            AttrValue::Bool(b) => RE::new_bool(*b),
+            AttrValue::Long(n) => RE::new_long(*n),
+            AttrValue::Ip(s) => RE::new_ip(s.clone()), // "192.0.2.1" or "10.0.0.0/8"
+            AttrValue::Set(xs) => RE::new_set(xs.iter().map(|x| x.to_re())),
+        }
+    }
+}
+
+/// A resource entity in the Cedar policy model.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct Resource {
+    /// Entity type, possibly namespaced: e.g. "Host", "Gateway", or "Database::Table"
+    kind: String,
+    /// Entity id (quotes are added when rendering the Cedar literal)
+    id: String,
+    /// Arbitrary attributes to attach to the resource entity
+    #[serde(default)]
+    attrs: BTreeMap<String, AttrValue>,
 }
 
 impl Display for Resource {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        // Turn &self into its discriminant:
-        let kind = ResourceKind::from(self).to_string();
-        // Pick the right “id” field for each variant:
-        let id = match self {
-            Resource::Photo { id } => id,
-            Resource::Host { name, .. } => name,
-            Resource::Generic { id, .. } => id,
-        };
-        write!(f, "{kind}::\"{id}\"")
+        write!(f, r#"{}::"{}""#, self.kind, self.id)
+    }
+}
+
+impl FromStr for Resource {
+    type Err = PolicyError;
+
+    /// Accepts:
+    /// - Host::web-01.example.com
+    /// - Host::"web-01.example.com"
+    /// - Database::Table::"users"
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // reuse your split_string_into_cedar_parts
+        let parts = split_string_into_cedar_parts(s)?;
+        let kind = parts
+            .type_part
+            .ok_or_else(|| PolicyError::InvalidFormat(format!("Missing type in `{s}`")))?;
+
+        Ok(Resource::new(kind, parts.id.to_string()))
+    }
+}
+
+impl Resource {
+    pub fn new(kind: impl Into<String>, id: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            id: id.into(),
+            attrs: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_attr(mut self, k: impl Into<String>, v: AttrValue) -> Self {
+        self.attrs.insert(k.into(), v);
+        self
+    }
+
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn attrs(&mut self) -> &mut BTreeMap<String, AttrValue> {
+        &mut self.attrs
     }
 }
 
 impl CedarAtom for Resource {
-    fn cedar_entity_uid(&self) -> Result<EntityUid, PolicyError> {
-        let literal = match self {
-            Resource::Generic { kind, id } => {
-                format!("{kind}::\"{id}\"")
-            }
-            _ => {
-                let kind = ResourceKind::from(self).to_string();
-                let id = self.cedar_id();
-                format!("{kind}::\"{id}\"")
-            }
-        };
-
-        EntityUid::from_str(&literal).map_err(|e| PolicyError::ParseError(e.to_string()))
-    }
-
-    fn cedar_attr(&self) -> Result<HashMap<String, RestrictedExpression>, PolicyError> {
-        let mut attrs = HashMap::new();
-        match self {
-            Resource::Photo { id } => {
-                attrs.insert(
-                    "id".to_string(),
-                    RestrictedExpression::new_string(id.clone()),
-                );
-            }
-            Resource::Host { name, ip } => {
-                attrs.insert(
-                    "name".to_string(),
-                    RestrictedExpression::new_string(name.clone()),
-                );
-                attrs.insert(
-                    "ip".to_string(),
-                    RestrictedExpression::new_ip(ip.to_string()),
-                );
-
-                let reg = HOST_PATTERNS.read().unwrap();
-                let mut matched = Vec::new();
-                for (label, re) in reg.iter() {
-                    if re.is_match(name) {
-                        matched.push(RestrictedExpression::new_string(label.clone()));
-                    }
-                }
-                attrs.insert(
-                    "nameLabels".to_string(),
-                    RestrictedExpression::new_set(matched),
-                );
-            }
-            Resource::Generic { kind, id } => {
-                attrs.insert(
-                    "kind".into(),
-                    RestrictedExpression::new_string(kind.clone()),
-                );
-                attrs.insert("id".into(), RestrictedExpression::new_string(id.clone()));
-            }
-        }
-        Ok(attrs)
-    }
-
-    fn cedar_ctx(&self) -> Result<Context, PolicyError> {
-        match self {
-            Resource::Host { name, ip } => {
-                let result = Context::from_pairs(vec![
-                    (
-                        "name".to_string(),
-                        RestrictedExpression::new_string(name.clone()),
-                    ),
-                    (
-                        "ip".to_string(),
-                        RestrictedExpression::new_ip(ip.to_string()),
-                    ),
-                ])?;
-                Ok(result)
-            }
-            Resource::Photo { .. } => Ok(Context::empty()),
-            Resource::Generic { kind, id } => {
-                let result = Context::from_pairs(vec![
-                    (
-                        "kind".into(),
-                        RestrictedExpression::new_string(kind.clone()),
-                    ),
-                    ("id".into(), RestrictedExpression::new_string(id.clone())),
-                ])?;
-                Ok(result)
-            }
-        }
-    }
-
     fn cedar_type() -> &'static str {
         "Resource"
     }
 
     fn cedar_id(&self) -> String {
-        match self {
-            Resource::Photo { id } => id.clone(),
-            Resource::Host { name, .. } => name.clone(),
-            Resource::Generic { id, .. } => id.clone(),
+        format!(r#"{}::"{}""#, self.kind, self.id)
+    }
+
+    fn cedar_entity_uid(&self) -> Result<EntityUid, PolicyError> {
+        EntityUid::from_str(&self.cedar_id()).map_err(|e| PolicyError::ParseError(e.to_string()))
+    }
+
+    fn cedar_attr(&self) -> Result<HashMap<String, RestrictedExpression>, PolicyError> {
+        let mut m = HashMap::with_capacity(self.attrs.len() + 1);
+        // It's often convenient to always expose `id` as an attribute too:
+        m.insert(
+            "id".to_string(),
+            RestrictedExpression::new_string(self.id.clone()),
+        );
+        for (k, v) in &self.attrs {
+            m.insert(k.clone(), v.to_re());
         }
+        Ok(m)
+    }
+
+    // Resource-level context is optional now; leave empty by default.
+    fn cedar_ctx(&self) -> Result<Context, PolicyError> {
+        Ok(Context::empty())
     }
 }
 
