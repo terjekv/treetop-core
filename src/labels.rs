@@ -98,3 +98,117 @@ impl LabelRegistry {
 pub static LABEL_REGISTRY: Lazy<LabelRegistry> = Lazy::new(|| LabelRegistry {
     inner: ArcSwap::from_pointee(Vec::new()),
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use yare::parameterized;
+
+    fn compile(rules: Vec<(&str, &str)>) -> Vec<(String, Regex)> {
+        rules
+            .into_iter()
+            .map(|(l, p)| (l.to_string(), Regex::new(p).unwrap()))
+            .collect()
+    }
+
+    fn get_label_strings(res: &mut Resource, key: &str) -> BTreeSet<String> {
+        match res.attrs().get(key) {
+            Some(AttrValue::Set(v)) => v
+                .iter()
+                .filter_map(|a| {
+                    if let AttrValue::String(s) = a {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            _ => BTreeSet::new(),
+        }
+    }
+
+    #[parameterized(
+        simple_match = {
+            "Host", "name", "nameLabels",
+            vec![("prod", r"(^|\.)prod\.example\.com$")],
+            "db12.prod.example.com",
+            &["prod"]
+        },
+        no_match = {
+            "Host", "name", "nameLabels",
+            vec![("corp", r"(^|\.)corp\.example\.com$")],
+            "web.dev.example.com",
+            &[]
+        },
+        multi_match = {
+            "Host", "name", "nameLabels",
+            vec![("prod", r"(^|\.)prod\."), ("db", r"(^|\.)db\d+\.")],
+            "db42.prod.example.com",
+            &["db","prod"]
+        }
+    )]
+    fn regex_labeler_apply_basic(
+        kind: &str,
+        field: &str,
+        output: &str,
+        rules: Vec<(&str, &str)>,
+        input: &str,
+        expected: &[&str],
+    ) {
+        let labeler = RegexLabeler::new(kind, field, output, compile(rules));
+
+        let mut res = Resource::new(kind, input);
+        res.attrs()
+            .insert(field.to_string(), AttrValue::String(input.to_string()));
+
+        labeler.apply(&mut res);
+
+        let got = get_label_strings(&mut res, output);
+        let want: BTreeSet<String> = expected.iter().map(|s| s.to_string()).collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn regex_labeler_missing_input_field_is_noop() {
+        let labeler = RegexLabeler::new(
+            "Host",
+            "name",
+            "nameLabels",
+            compile(vec![("prod", r"(^|\.)prod\.")]),
+        );
+
+        let mut res = Resource::new("Host", "db99.prod.example.com");
+        // no "name" inserted
+
+        labeler.apply(&mut res);
+        assert!(res.attrs().get("nameLabels").is_none());
+    }
+
+    #[test]
+    fn regex_labeler_appends_to_existing_set() {
+        let labeler = RegexLabeler::new(
+            "Host",
+            "name",
+            "nameLabels",
+            compile(vec![("prod", r"(^|\.)prod\."), ("db", r"(^|\.)db\d+\.")]),
+        );
+
+        let mut res = Resource::new("Host", "db99.prod.example.com");
+        res.attrs().insert(
+            "name".into(),
+            AttrValue::String("db99.prod.example.com".into()),
+        );
+        res.attrs().insert(
+            "nameLabels".into(),
+            AttrValue::Set(vec![AttrValue::String("pre".into())]),
+        );
+
+        labeler.apply(&mut res);
+
+        let labels = get_label_strings(&mut res, "nameLabels");
+        assert!(labels.contains("pre"));
+        assert!(labels.contains("prod"));
+        assert!(labels.contains("db"));
+    }
+}
