@@ -12,15 +12,18 @@ pub trait Labeler: Send + Sync {
     fn apply(&self, res: &mut Resource);
 }
 
+/// A labeler that uses regular expressions for matching on resource attributes.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RegexLabeler {
+    /// The kind of resource this labeler applies to, e.g. "Host"
     kind: String,
     /// attribute to read from, e.g. "name"
     field: String,
     /// attribute to write to, e.g. "nameLabels"
     output: String,
-    table: Vec<(String, Regex)>, // (label, pattern)
+    /// Rulesets for matching resource attributes
+    table: Vec<(String, Regex)>,
 }
 
 impl RegexLabeler {
@@ -66,11 +69,14 @@ impl Labeler for RegexLabeler {
     }
 }
 
+/// Implementation of the LabelRegistry.
+///
+/// Consumption of this registry goes through the static `LABEL_REGISTRY`.
 pub struct LabelRegistry {
     inner: ArcSwap<Vec<Arc<dyn Labeler>>>,
 }
-
 impl LabelRegistry {
+    /// Applies all labelers in the registry to the given resource.
     pub fn apply(&self, res: &mut Resource) {
         let snapshot = self.inner.load();
         let kind_owned = res.kind().to_owned();
@@ -81,6 +87,9 @@ impl LabelRegistry {
         }
     }
 
+    /// Loads a set of labelers into the registry, atomically.
+    ///
+    /// All previously loaded labelers will be replaced.
     pub fn load(&self, labelers: Vec<Arc<dyn Labeler>>) {
         self.inner.store(Arc::new(labelers));
     }
