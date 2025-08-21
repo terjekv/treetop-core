@@ -5,11 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.10] - 2025-08-21
+
+### Added
+
+- The version of the `cedar` library used is now found in the `BuildInfo` struct.
+
+### Fixed
+
+- Fixed build information when delivered as a crate.
+
 ## [0.0.9] - 2025-08-21
 
 ### Added
 
-- Build information, exposing `DECLARED_VERSION` (ie, `version` from `Cargo.toml´) and `version()` which is 
+- Build information, exposing a `build_info()` function that returns a `&'static BuildInfo` instance.
 
 ## [0.0.8] - 2025-08-19
 
