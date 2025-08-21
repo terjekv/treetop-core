@@ -25,3 +25,19 @@ tracing = "0.1"
 utoipa = "5.4.0"
 yare = "3.0"
 arc-swap = "1"
+
+[build-dependencies]
+vergen = { version = "9", features = [
+    "emit_and_set",
+    "build",
+    "cargo",
+    "rustc",
+    "si",
+] }
+vergen-gitcl = { version = "1", features = [
+    "emit_and_set",
+    "build",
+    "cargo",
+    "rustc",
+    "si",
+] }

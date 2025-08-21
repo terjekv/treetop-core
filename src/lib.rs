@@ -60,6 +60,7 @@
 //!
 //!
 
+pub use build_info::build_info;
 pub use engine::PolicyEngine;
 pub use error::PolicyError;
 pub use labels::{LABEL_REGISTRY, Labeler, RegexLabeler};
@@ -67,6 +68,7 @@ pub use models::{
     Action, AttrValue, Decision, Group, Groups, Principal, Request, Resource, User, UserPolicies,
 };
 
+mod build_info;
 mod engine;
 mod error;
 mod labels;
