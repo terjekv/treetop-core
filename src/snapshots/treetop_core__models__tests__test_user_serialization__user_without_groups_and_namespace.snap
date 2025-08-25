@@ -4,6 +4,6 @@ expression: serialized
 ---
 {
   "groups": [],
-  "namespace": [],
-  "qid": "test_user"
+  "id": "test_user",
+  "namespace": []
 }

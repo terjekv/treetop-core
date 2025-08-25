@@ -3,8 +3,8 @@ source: src/models.rs
 expression: serialized
 ---
 {
+  "id": "test_action",
   "namespace": [
     "namespace1"
-  ],
-  "qid": "test_action"
+  ]
 }

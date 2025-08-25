@@ -5,23 +5,23 @@ expression: serialized
 {
   "groups": [
     {
+      "id": "group1",
       "namespace": [
         "namespace1",
         "namespace2"
-      ],
-      "qid": "group1"
+      ]
     },
     {
+      "id": "group2",
       "namespace": [
         "namespace1",
         "namespace2"
-      ],
-      "qid": "group2"
+      ]
     }
   ],
+  "id": "test_user",
   "namespace": [
     "namespace1",
     "namespace2"
-  ],
-  "qid": "test_user"
+  ]
 }

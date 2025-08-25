@@ -244,7 +244,7 @@ pub enum ActionMarker {}
 /// A fully‐qualified identifier, with zero runtime cost over `(Vec<String>, String)`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub struct QualifiedId<T> {
-    qid: String,
+    id: String,
     namespace: Vec<String>,
     #[serde(skip)]
     _marker: PhantomData<T>,
@@ -254,7 +254,7 @@ impl<T> QualifiedId<T> {
     /// Construct from its parts.  Guaranteed valid by signature.
     pub fn new(id: impl Into<String>, namespace: Option<Vec<String>>) -> Self {
         QualifiedId {
-            qid: id.into(),
+            id: id.into(),
             namespace: namespace.unwrap_or_default(),
             _marker: PhantomData,
         }
@@ -262,7 +262,7 @@ impl<T> QualifiedId<T> {
 
     /// Get the raw id.
     pub fn id(&self) -> &str {
-        &self.qid
+        &self.id
     }
 
     /// Get the namespace path.
@@ -279,7 +279,7 @@ impl<T> QualifiedId<T> {
         }
         format!(
             r#"{parts}{ty}::"{id}""#,
-            id = self.qid,
+            id = self.id,
             parts = parts,
             ty = ty
         )
@@ -289,7 +289,7 @@ impl<T> QualifiedId<T> {
 impl<T> Display for QualifiedId<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         // We don't know `T`'s name here; we'll implement Display on the wrappers.
-        write!(f, "{}", self.qid)
+        write!(f, "{}", self.id)
     }
 }
 
@@ -304,13 +304,13 @@ pub type ActionId = QualifiedId<ActionMarker>;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash)]
 pub struct User {
     #[serde(flatten)]
-    qid: UserId,
+    id: UserId,
     groups: Groups,
 }
 
 impl Display for User {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.qid.fmt_qualified(Self::cedar_type()))
+        write!(f, "{}", self.id.fmt_qualified(Self::cedar_type()))
     }
 }
 
@@ -337,7 +337,7 @@ impl User {
         namespace: Option<Vec<String>>,
     ) -> Self {
         User {
-            qid: UserId::new(id, namespace.clone()),
+            id: UserId::new(id, namespace.clone()),
             groups: Groups::new(groups.unwrap_or_default(), namespace),
         }
     }
@@ -353,7 +353,7 @@ impl CedarAtom for User {
     }
 
     fn cedar_id(&self) -> String {
-        self.qid.fmt_qualified(Self::cedar_type())
+        self.id.fmt_qualified(Self::cedar_type())
     }
 }
 
@@ -400,12 +400,12 @@ impl FromStr for User {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash)]
 pub struct Action {
     #[serde(flatten)]
-    qid: ActionId,
+    id: ActionId,
 }
 
 impl Display for Action {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.qid.fmt_qualified(Self::cedar_type()))
+        write!(f, "{}", self.id.fmt_qualified(Self::cedar_type()))
     }
 }
 
@@ -413,7 +413,7 @@ impl Action {
     /// Create a new action with an optional namespace.
     pub fn new<T: Into<String>>(id: T, namespace: Option<Vec<String>>) -> Self {
         Action {
-            qid: ActionId::new(id, namespace),
+            id: ActionId::new(id, namespace),
         }
     }
 
@@ -429,7 +429,7 @@ impl CedarAtom for Action {
     }
 
     fn cedar_id(&self) -> String {
-        self.qid.fmt_qualified(Self::cedar_type())
+        self.id.fmt_qualified(Self::cedar_type())
     }
 }
 
@@ -467,21 +467,21 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash)]
 pub struct Group {
     #[serde(flatten)]
-    qid: GroupId,
+    id: GroupId,
 }
 
 impl Group {
     /// Create a new group with an optional namespace.
     pub fn new<S: AsRef<str>>(name: S, namespace: Option<Vec<String>>) -> Self {
         Group {
-            qid: GroupId::new(name.as_ref(), namespace),
+            id: GroupId::new(name.as_ref(), namespace),
         }
     }
 }
 
 impl Display for Group {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.qid.fmt_qualified(Self::cedar_type()))
+        write!(f, "{}", self.id.fmt_qualified(Self::cedar_type()))
     }
 }
 
@@ -491,7 +491,7 @@ impl CedarAtom for Group {
     }
 
     fn cedar_id(&self) -> String {
-        self.qid.fmt_qualified(Self::cedar_type())
+        self.id.fmt_qualified(Self::cedar_type())
     }
 }
 
@@ -545,7 +545,7 @@ impl Groups {
 
 impl Display for Groups {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        let group_names: Vec<String> = self.0.iter().map(|g| g.qid.id().to_string()).collect();
+        let group_names: Vec<String> = self.0.iter().map(|g| g.id.id().to_string()).collect();
         write!(f, "[{}]", group_names.join(", "))
     }
 }
@@ -735,19 +735,19 @@ mod tests {
             user_str.trim()
         };
 
-        assert_eq!(user.qid.fmt_qualified("User"), quote_last_element(target));
+        assert_eq!(user.id.fmt_qualified("User"), quote_last_element(target));
 
-        assert_eq!(user.qid.id(), expected_id);
+        assert_eq!(user.id.id(), expected_id);
         assert_eq!(
             user.groups
                 .0
                 .iter()
-                .map(|g| g.qid.to_string())
+                .map(|g| g.id.to_string())
                 .collect::<Vec<_>>(),
             expected_groups.unwrap_or_default()
         );
         assert_eq!(
-            user.qid.namespace(),
+            user.id.namespace(),
             expected_namespace.as_deref().unwrap_or(&vec![])
         );
     }
@@ -762,9 +762,9 @@ mod tests {
     )]
     fn test_action_from_str(action_str: &str, expected_id: &str) {
         let action = Action::from_str(action_str).unwrap();
-        assert_eq!(action.qid.id(), expected_id);
+        assert_eq!(action.id.id(), expected_id);
         assert_eq!(
-            action.qid.fmt_qualified("Action"),
+            action.id.fmt_qualified("Action"),
             quote_last_element(action_str)
         );
     }
@@ -783,13 +783,13 @@ mod tests {
         expected_namespace: Option<Vec<String>>,
     ) {
         let group = Group::from_str(group_str).unwrap();
-        assert_eq!(group.qid.id(), expected_id);
+        assert_eq!(group.id.id(), expected_id);
         assert_eq!(
-            group.qid.fmt_qualified("Group"),
+            group.id.fmt_qualified("Group"),
             quote_last_element(group_str)
         );
         assert_eq!(
-            group.qid.namespace(),
+            group.id.namespace(),
             expected_namespace.as_deref().unwrap_or(&vec![])
         );
     }
@@ -816,7 +816,7 @@ mod tests {
         let user = User::new(user_str, groups, namespaces);
         let serialized = serde_json::to_value(&user).unwrap();
         let deserialized: User = serde_json::from_value(serialized.clone()).unwrap();
-        assert_eq!(user.qid, deserialized.qid);
+        assert_eq!(user.id, deserialized.id);
         assert_eq!(user, deserialized);
         assert_eq!(user.cedar_id(), deserialized.cedar_id());
 
@@ -835,7 +835,7 @@ mod tests {
         let action = Action::new(id, some_str_to_string(namespaces));
         let serialized = serde_json::to_value(&action).unwrap();
         let deserialized: Action = serde_json::from_value(serialized.clone()).unwrap();
-        assert_eq!(action.qid, deserialized.qid);
+        assert_eq!(action.id, deserialized.id);
         assert_eq!(action, deserialized);
         assert_eq!(action.cedar_id(), deserialized.cedar_id());
 
@@ -866,6 +866,25 @@ mod tests {
         insta::with_settings!({sort_maps => true}, {
             assert_json_snapshot!(serialized);
             assert_snapshot!(resource.cedar_id());
+        });
+    }
+
+    #[test]
+    fn assert_request_serialization() {
+        let request = Request {
+            principal: Principal::User(User::new(
+                "alice",
+                Some(vec!["devs".to_string(), "admins".to_string()]),
+                Some(vec!["Infra".to_string()]),
+            )),
+            action: Action::new("create_host", Some(vec!["Infra".to_string()])),
+            resource: Resource::new("Host", "web-01.example.com")
+                .with_attr("ip", AttrValue::Ip("10.0.0.1".to_string())),
+        };
+        let serialized = serde_json::to_value(&request).unwrap();
+
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(serialized);
         });
     }
 }

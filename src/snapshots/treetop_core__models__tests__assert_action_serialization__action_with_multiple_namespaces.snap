@@ -3,9 +3,9 @@ source: src/models.rs
 expression: serialized
 ---
 {
+  "id": "test_action",
   "namespace": [
     "namespace1",
     "namespace2"
-  ],
-  "qid": "test_action"
+  ]
 }
