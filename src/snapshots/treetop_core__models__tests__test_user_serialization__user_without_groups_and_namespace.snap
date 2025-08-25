@@ -1,0 +1,9 @@
+---
+source: src/models.rs
+expression: serialized
+---
+{
+  "groups": [],
+  "namespace": [],
+  "qid": "test_user"
+}

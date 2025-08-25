@@ -1,0 +1,8 @@
+---
+source: src/models.rs
+expression: serialized
+---
+{
+  "namespace": [],
+  "qid": "test_action"
+}

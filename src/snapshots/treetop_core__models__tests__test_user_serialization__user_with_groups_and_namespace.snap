@@ -1,0 +1,24 @@
+---
+source: src/models.rs
+expression: serialized
+---
+{
+  "groups": [
+    {
+      "namespace": [
+        "namespace1"
+      ],
+      "qid": "group1"
+    },
+    {
+      "namespace": [
+        "namespace1"
+      ],
+      "qid": "group2"
+    }
+  ],
+  "namespace": [
+    "namespace1"
+  ],
+  "qid": "test_user"
+}

@@ -1,0 +1,8 @@
+---
+source: src/models.rs
+expression: serialized
+---
+{
+  "id": "test_id",
+  "kind": "test_resource"
+}

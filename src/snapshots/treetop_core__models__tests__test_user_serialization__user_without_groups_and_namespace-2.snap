@@ -1,0 +1,5 @@
+---
+source: src/models.rs
+expression: user.cedar_id()
+---
+User::"test_user"

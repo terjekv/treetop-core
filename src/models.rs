@@ -17,7 +17,7 @@ use crate::traits::CedarAtom;
 use utoipa::ToSchema;
 
 /// A principal for a policy query.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash)]
 pub enum Principal {
     User(User),
     Group(Group),
@@ -70,7 +70,7 @@ impl CedarAtom for Principal {
 }
 
 /// The API-level request, with strongly-typed principal, action, groups, resource, and context.
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, PartialEq, Eq, Hash)]
 pub struct Request {
     pub principal: Principal,
     pub action: Action,
@@ -112,8 +112,8 @@ impl FromDecisionWithPolicy for Decision {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(tag = "t", content = "v")]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, PartialEq, Eq, Hash)]
+#[serde(tag = "type", content = "value")]
 pub enum AttrValue {
     String(String),
     Bool(bool),
@@ -137,14 +137,14 @@ impl AttrValue {
 }
 
 /// A resource entity in the Cedar policy model.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash)]
 pub struct Resource {
     /// Entity type, possibly namespaced: e.g. "Host", "Gateway", or "Database::Table"
     kind: String,
     /// Entity id (quotes are added when rendering the Cedar literal)
     id: String,
     /// Arbitrary attributes to attach to the resource entity
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     attrs: BTreeMap<String, AttrValue>,
 }
 
@@ -244,7 +244,7 @@ pub enum ActionMarker {}
 /// A fully‐qualified identifier, with zero runtime cost over `(Vec<String>, String)`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub struct QualifiedId<T> {
-    id: String,
+    qid: String,
     namespace: Vec<String>,
     #[serde(skip)]
     _marker: PhantomData<T>,
@@ -254,7 +254,7 @@ impl<T> QualifiedId<T> {
     /// Construct from its parts.  Guaranteed valid by signature.
     pub fn new(id: impl Into<String>, namespace: Option<Vec<String>>) -> Self {
         QualifiedId {
-            id: id.into(),
+            qid: id.into(),
             namespace: namespace.unwrap_or_default(),
             _marker: PhantomData,
         }
@@ -262,7 +262,7 @@ impl<T> QualifiedId<T> {
 
     /// Get the raw id.
     pub fn id(&self) -> &str {
-        &self.id
+        &self.qid
     }
 
     /// Get the namespace path.
@@ -279,7 +279,7 @@ impl<T> QualifiedId<T> {
         }
         format!(
             r#"{parts}{ty}::"{id}""#,
-            id = self.id,
+            id = self.qid,
             parts = parts,
             ty = ty
         )
@@ -289,7 +289,7 @@ impl<T> QualifiedId<T> {
 impl<T> Display for QualifiedId<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         // We don't know `T`'s name here; we'll implement Display on the wrappers.
-        write!(f, "{}", self.id)
+        write!(f, "{}", self.qid)
     }
 }
 
@@ -301,15 +301,16 @@ pub type GroupId = QualifiedId<GroupMarker>;
 pub type ActionId = QualifiedId<ActionMarker>;
 
 /// A user principal, possibly with a namespace (e.g. Application::User::"alice").
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash)]
 pub struct User {
-    id: UserId,
+    #[serde(flatten)]
+    qid: UserId,
     groups: Groups,
 }
 
 impl Display for User {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.id.fmt_qualified(Self::cedar_type()))
+        write!(f, "{}", self.qid.fmt_qualified(Self::cedar_type()))
     }
 }
 
@@ -336,7 +337,7 @@ impl User {
         namespace: Option<Vec<String>>,
     ) -> Self {
         User {
-            id: UserId::new(id, namespace.clone()),
+            qid: UserId::new(id, namespace.clone()),
             groups: Groups::new(groups.unwrap_or_default(), namespace),
         }
     }
@@ -352,7 +353,7 @@ impl CedarAtom for User {
     }
 
     fn cedar_id(&self) -> String {
-        self.id.fmt_qualified(Self::cedar_type())
+        self.qid.fmt_qualified(Self::cedar_type())
     }
 }
 
@@ -396,14 +397,15 @@ impl FromStr for User {
 }
 
 /// An action, possibly with a namespace (e.g. Infra::Action::"delete_vm").
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash)]
 pub struct Action {
-    id: ActionId,
+    #[serde(flatten)]
+    qid: ActionId,
 }
 
 impl Display for Action {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.id.fmt_qualified(Self::cedar_type()))
+        write!(f, "{}", self.qid.fmt_qualified(Self::cedar_type()))
     }
 }
 
@@ -411,7 +413,7 @@ impl Action {
     /// Create a new action with an optional namespace.
     pub fn new<T: Into<String>>(id: T, namespace: Option<Vec<String>>) -> Self {
         Action {
-            id: ActionId::new(id, namespace),
+            qid: ActionId::new(id, namespace),
         }
     }
 
@@ -427,7 +429,7 @@ impl CedarAtom for Action {
     }
 
     fn cedar_id(&self) -> String {
-        self.id.fmt_qualified(Self::cedar_type())
+        self.qid.fmt_qualified(Self::cedar_type())
     }
 }
 
@@ -462,19 +464,24 @@ where
 }
 
 /// A group identifier (e.g. Group::"devs").
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Group(GroupId);
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash)]
+pub struct Group {
+    #[serde(flatten)]
+    qid: GroupId,
+}
 
 impl Group {
     /// Create a new group with an optional namespace.
     pub fn new<S: AsRef<str>>(name: S, namespace: Option<Vec<String>>) -> Self {
-        Group(GroupId::new(name.as_ref(), namespace))
+        Group {
+            qid: GroupId::new(name.as_ref(), namespace),
+        }
     }
 }
 
 impl Display for Group {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.0.fmt_qualified(Self::cedar_type()))
+        write!(f, "{}", self.qid.fmt_qualified(Self::cedar_type()))
     }
 }
 
@@ -484,7 +491,7 @@ impl CedarAtom for Group {
     }
 
     fn cedar_id(&self) -> String {
-        self.0.fmt_qualified(Self::cedar_type())
+        self.qid.fmt_qualified(Self::cedar_type())
     }
 }
 
@@ -509,7 +516,7 @@ impl FromStr for Group {
 }
 
 /// A collection of Group entries.
-#[derive(Debug, Default, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash)]
 pub struct Groups(Vec<Group>);
 
 impl Groups {
@@ -538,11 +545,7 @@ impl Groups {
 
 impl Display for Groups {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        let group_names: Vec<String> = self
-            .0
-            .iter()
-            .map(|g| g.0.clone().id().to_string())
-            .collect();
+        let group_names: Vec<String> = self.0.iter().map(|g| g.qid.id().to_string()).collect();
         write!(f, "[{}]", group_names.join(", "))
     }
 }
@@ -671,6 +674,7 @@ fn split_string_into_cedar_parts(s: &str) -> Result<CedarParts<'_>, PolicyError>
 
 #[cfg(test)]
 mod tests {
+    use insta::{assert_json_snapshot, assert_snapshot};
     use yare::parameterized;
 
     use super::*;
@@ -731,19 +735,19 @@ mod tests {
             user_str.trim()
         };
 
-        assert_eq!(user.id.fmt_qualified("User"), quote_last_element(target));
+        assert_eq!(user.qid.fmt_qualified("User"), quote_last_element(target));
 
-        assert_eq!(user.id.id(), expected_id);
+        assert_eq!(user.qid.id(), expected_id);
         assert_eq!(
             user.groups
                 .0
                 .iter()
-                .map(|g| g.0.id().to_string())
+                .map(|g| g.qid.to_string())
                 .collect::<Vec<_>>(),
             expected_groups.unwrap_or_default()
         );
         assert_eq!(
-            user.id.namespace(),
+            user.qid.namespace(),
             expected_namespace.as_deref().unwrap_or(&vec![])
         );
     }
@@ -758,9 +762,9 @@ mod tests {
     )]
     fn test_action_from_str(action_str: &str, expected_id: &str) {
         let action = Action::from_str(action_str).unwrap();
-        assert_eq!(action.id.id(), expected_id);
+        assert_eq!(action.qid.id(), expected_id);
         assert_eq!(
-            action.id.fmt_qualified("Action"),
+            action.qid.fmt_qualified("Action"),
             quote_last_element(action_str)
         );
     }
@@ -779,14 +783,89 @@ mod tests {
         expected_namespace: Option<Vec<String>>,
     ) {
         let group = Group::from_str(group_str).unwrap();
-        assert_eq!(group.0.id(), expected_id);
+        assert_eq!(group.qid.id(), expected_id);
         assert_eq!(
-            group.0.fmt_qualified("Group"),
+            group.qid.fmt_qualified("Group"),
             quote_last_element(group_str)
         );
         assert_eq!(
-            group.0.namespace(),
+            group.qid.namespace(),
             expected_namespace.as_deref().unwrap_or(&vec![])
         );
+    }
+
+    fn some_str_to_string(input: Option<Vec<&str>>) -> Option<Vec<String>> {
+        input.map(|v| v.into_iter().map(|s| s.to_string()).collect())
+    }
+
+    #[parameterized(
+        user_without_groups_and_namespace = { "test_user", None, None },
+        user_with_one_group_and_one_namespace = { "test_user", Some(vec!["group1"]), Some(vec!["namespace1"]) },
+        user_with_groups_and_namespace = { "test_user", Some(vec!["group1", "group2"]), Some(vec!["namespace1"]) },
+        user_with_groups_and_namespaces = { "test_user", Some(vec!["group1", "group2"]), Some(vec!["namespace1", "namespace2"]) },
+
+    )]
+    fn test_user_serialization(
+        user_str: &str,
+        expected_groups: Option<Vec<&str>>,
+        expected_namespace: Option<Vec<&str>>,
+    ) {
+        let groups = some_str_to_string(expected_groups);
+        let namespaces = some_str_to_string(expected_namespace);
+
+        let user = User::new(user_str, groups, namespaces);
+        let serialized = serde_json::to_value(&user).unwrap();
+        let deserialized: User = serde_json::from_value(serialized.clone()).unwrap();
+        assert_eq!(user.qid, deserialized.qid);
+        assert_eq!(user, deserialized);
+        assert_eq!(user.cedar_id(), deserialized.cedar_id());
+
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(serialized);
+            assert_snapshot!(user.cedar_id());
+        });
+    }
+
+    #[parameterized(
+        action_without_namespace = { "test_action", None },
+        action_with_namespace = { "test_action", Some(vec!["namespace1"]) },
+        action_with_multiple_namespaces = { "test_action", Some(vec!["namespace1", "namespace2"]) },
+    )]
+    fn assert_action_serialization(id: &str, namespaces: Option<Vec<&str>>) {
+        let action = Action::new(id, some_str_to_string(namespaces));
+        let serialized = serde_json::to_value(&action).unwrap();
+        let deserialized: Action = serde_json::from_value(serialized.clone()).unwrap();
+        assert_eq!(action.qid, deserialized.qid);
+        assert_eq!(action, deserialized);
+        assert_eq!(action.cedar_id(), deserialized.cedar_id());
+
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(serialized);
+            assert_snapshot!(action.cedar_id());
+        });
+    }
+
+    #[parameterized(
+        resource_without_attributes = { "test_resource", "test_id", None },
+        resource_with_attributes = { "test_resource", "test_id", Some(vec![("attr1", AttrValue::String("value1".to_string())), ("attr2", AttrValue::Ip("10.0.0.1".to_string()))]) },
+    )]
+    fn assert_resource_serialization(kind: &str, id: &str, attrs: Option<Vec<(&str, AttrValue)>>) {
+        let mut resource = Resource::new(kind, id);
+        if let Some(attrs) = attrs {
+            for (key, value) in attrs {
+                resource = resource.with_attr(key, value);
+            }
+        }
+
+        let serialized = serde_json::to_value(&resource).unwrap();
+        let deserialized: Resource = serde_json::from_value(serialized.clone()).unwrap();
+        assert_eq!(resource.kind(), deserialized.kind());
+        assert_eq!(resource, deserialized);
+        assert_eq!(resource.cedar_id(), deserialized.cedar_id());
+
+        insta::with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(serialized);
+            assert_snapshot!(resource.cedar_id());
+        });
     }
 }

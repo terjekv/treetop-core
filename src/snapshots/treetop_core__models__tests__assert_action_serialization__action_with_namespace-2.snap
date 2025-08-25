@@ -1,0 +1,5 @@
+---
+source: src/models.rs
+expression: action.cedar_id()
+---
+namespace1::Action::"test_action"

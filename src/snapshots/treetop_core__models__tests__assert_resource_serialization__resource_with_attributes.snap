@@ -1,0 +1,18 @@
+---
+source: src/models.rs
+expression: serialized
+---
+{
+  "attrs": {
+    "attr1": {
+      "type": "String",
+      "value": "value1"
+    },
+    "attr2": {
+      "type": "Ip",
+      "value": "10.0.0.1"
+    }
+  },
+  "id": "test_id",
+  "kind": "test_resource"
+}
