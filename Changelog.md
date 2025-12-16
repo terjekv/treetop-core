@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.12] - 2025-12-04
+
+### Added
+
+- Policy snapshoting and version tracking
+  - A new `PolicyVersion` struct represents the version of the policies, with the following fields:
+    - `hash`: SHA-256 hash of the policy text
+    - `loaded_at`: ISO 8601 timestamp of when the policy was loaded
+  - A new `PolicySnapshot` struct represents a snapshot of the currently loaded policies, with the following methods:
+    - `policy_set()`: Returns a reference to the current `cedar::PolicySet`
+    - `version()`: Returns a `PolicyVersion` struct representing the version of the policies in this snapshot.
+  - PolicyEngine now offers `current_snapshot()` and `current_version()` methods.
+  - `current_snapshot()` returns the `PolicySnapshot` for the currently loaded policies.
+  - `current_version()` returns a `PolicyVersion` for the currently loaded policies.
+- `Decision` enum variants now include a `version` field containing a `PolicyVersion`.
+- Lock-free policy reloading using `arc-swap` for better concurrency
+- Evaluation timing metrics in debug logs
+
+### Changed
+
+- **BREAKING**: `Decision::Allow` now includes `version` field: `Decision::Allow { policy, version }`
+- **BREAKING**: `Decision::Deny` now includes `version` field: `Decision::Deny { version }`
+- Internal policy storage changed from `RwLock<PolicySet>` to `ArcSwap<Snapshot>` for lock-free reads
+- `PolicyEngine` is now fully thread-safe with non-blocking reads during evaluation
+
 ## [0.0.11] - 2025-09-01
 
 ### Added
@@ -13,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Flattened the qualified ID structures in serialization (ie, going from `{"id" : { "id": "foo"}}` to `{"id": "foo"}`). This is a breaking API change.
+- **BREAKING**: Flattened the qualified ID structures in serialization (ie, going from `{"id" : { "id": "foo"}}` to `{"id": "foo"}`).
 
 ## [0.0.10] - 2025-08-21
 

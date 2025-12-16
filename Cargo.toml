@@ -1,6 +1,6 @@
 [package]
 name = "treetop-core"
-version = "0.0.11"
+version = "0.0.12"
 edition = "2024"
 license = "MIT"
 description = "Core library for Treetop, a Cedar policy engine implementation."
@@ -12,7 +12,9 @@ keywords = ["cedar", "policy", "authentication"]
 [dependencies]
 cedar-policy = "4.5"
 cedar-policy-core = "4.5"
-insta = { version = "1.43.1", features = ["json", "serde"] }
+humantime = "2"
+sha2 = "0.10"
+insta = { version = "1.43.1", features = ["json", "serde", "redactions"] }
 itertools = "0.14"
 once_cell = "1.21"
 regex = "1.11"

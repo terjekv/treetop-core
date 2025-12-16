@@ -7,27 +7,31 @@ expression: decision
     "policy": {
       "literal": "permit (\n    principal in Database::Group::\"dbusers\",\n    action == Database::Action::\"view_table\",\n    resource is Database::Table\n);",
       "json": {
-        "action": {
-          "entity": {
-            "id": "view_table",
-            "type": "Database::Action"
-          },
-          "op": "=="
-        },
-        "conditions": [],
         "effect": "permit",
         "principal": {
+          "op": "in",
           "entity": {
-            "id": "dbusers",
-            "type": "Database::Group"
-          },
-          "op": "in"
+            "type": "Database::Group",
+            "id": "dbusers"
+          }
+        },
+        "action": {
+          "op": "==",
+          "entity": {
+            "type": "Database::Action",
+            "id": "view_table"
+          }
         },
         "resource": {
-          "entity_type": "Database::Table",
-          "op": "is"
-        }
+          "op": "is",
+          "entity_type": "Database::Table"
+        },
+        "conditions": []
       }
+    },
+    "version": {
+      "hash": "3e08780bcab1195040be80a026ea6acec1eef12e0f5a8cca2550eb1b4bb6b5c2",
+      "loaded_at": "[timestamp]"
     }
   }
 }

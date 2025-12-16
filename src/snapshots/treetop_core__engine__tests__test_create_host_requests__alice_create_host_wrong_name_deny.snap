@@ -2,4 +2,11 @@
 source: src/engine.rs
 expression: decision
 ---
-"Deny"
+{
+  "Deny": {
+    "version": {
+      "hash": "fb81c2dc092d8f992659f666106894bb0cde22932f2ee2a819b4d8cbc81bfc94",
+      "loaded_at": "[timestamp]"
+    }
+  }
+}

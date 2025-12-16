@@ -7,46 +7,50 @@ expression: decision
     "policy": {
       "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"assign_gateway\",\n    resource is Gateway\n) when {\n    resource.id == \"mygateway\"\n};",
       "json": {
-        "action": {
+        "effect": "permit",
+        "principal": {
+          "op": "==",
           "entity": {
-            "id": "assign_gateway",
-            "type": "Action"
-          },
-          "op": "=="
+            "type": "User",
+            "id": "alice"
+          }
+        },
+        "action": {
+          "op": "==",
+          "entity": {
+            "type": "Action",
+            "id": "assign_gateway"
+          }
+        },
+        "resource": {
+          "op": "is",
+          "entity_type": "Gateway"
         },
         "conditions": [
           {
+            "kind": "when",
             "body": {
               "==": {
                 "left": {
                   ".": {
-                    "attr": "id",
                     "left": {
                       "Var": "resource"
-                    }
+                    },
+                    "attr": "id"
                   }
                 },
                 "right": {
                   "Value": "mygateway"
                 }
               }
-            },
-            "kind": "when"
+            }
           }
-        ],
-        "effect": "permit",
-        "principal": {
-          "entity": {
-            "id": "alice",
-            "type": "User"
-          },
-          "op": "=="
-        },
-        "resource": {
-          "entity_type": "Gateway",
-          "op": "is"
-        }
+        ]
       }
+    },
+    "version": {
+      "hash": "fc7246a50468ef5f93eeb9098c10506a11bb611869fc68ec3999662ce7f60080",
+      "loaded_at": "[timestamp]"
     }
   }
 }

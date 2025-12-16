@@ -7,30 +7,34 @@ expression: decision
     "policy": {
       "literal": "@id(\"DNS.users_policy\")\npermit (\n    principal in DNS::Group::\"users\",\n    action == DNS::Action::\"view_host\",\n    resource is Host\n);",
       "json": {
-        "action": {
-          "entity": {
-            "id": "view_host",
-            "type": "DNS::Action"
-          },
-          "op": "=="
-        },
-        "annotations": {
-          "id": "DNS.users_policy"
-        },
-        "conditions": [],
         "effect": "permit",
         "principal": {
+          "op": "in",
           "entity": {
-            "id": "users",
-            "type": "DNS::Group"
-          },
-          "op": "in"
+            "type": "DNS::Group",
+            "id": "users"
+          }
+        },
+        "action": {
+          "op": "==",
+          "entity": {
+            "type": "DNS::Action",
+            "id": "view_host"
+          }
         },
         "resource": {
-          "entity_type": "Host",
-          "op": "is"
+          "op": "is",
+          "entity_type": "Host"
+        },
+        "conditions": [],
+        "annotations": {
+          "id": "DNS.users_policy"
         }
       }
+    },
+    "version": {
+      "hash": "d7efadba123ba2cfa6cf1768a1db2a82b5a199190b1b9d344243d976e2b0f790",
+      "loaded_at": "[timestamp]"
     }
   }
 }

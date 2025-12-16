@@ -7,44 +7,48 @@ expression: decision
     "policy": {
       "literal": "@id(\"DNS.admins_policy\")\npermit (\n    principal in DNS::Group::\"admins\",\n    action in\n        [DNS::Action::\"create_host\",\n         DNS::Action::\"delete_host\",\n         DNS::Action::\"view_host\",\n         DNS::Action::\"edit_host\"],\n    resource is Host\n);",
       "json": {
-        "action": {
-          "entities": [
-            {
-              "id": "create_host",
-              "type": "DNS::Action"
-            },
-            {
-              "id": "delete_host",
-              "type": "DNS::Action"
-            },
-            {
-              "id": "view_host",
-              "type": "DNS::Action"
-            },
-            {
-              "id": "edit_host",
-              "type": "DNS::Action"
-            }
-          ],
-          "op": "in"
-        },
-        "annotations": {
-          "id": "DNS.admins_policy"
-        },
-        "conditions": [],
         "effect": "permit",
         "principal": {
+          "op": "in",
           "entity": {
-            "id": "admins",
-            "type": "DNS::Group"
-          },
-          "op": "in"
+            "type": "DNS::Group",
+            "id": "admins"
+          }
+        },
+        "action": {
+          "op": "in",
+          "entities": [
+            {
+              "type": "DNS::Action",
+              "id": "create_host"
+            },
+            {
+              "type": "DNS::Action",
+              "id": "delete_host"
+            },
+            {
+              "type": "DNS::Action",
+              "id": "view_host"
+            },
+            {
+              "type": "DNS::Action",
+              "id": "edit_host"
+            }
+          ]
         },
         "resource": {
-          "entity_type": "Host",
-          "op": "is"
+          "op": "is",
+          "entity_type": "Host"
+        },
+        "conditions": [],
+        "annotations": {
+          "id": "DNS.admins_policy"
         }
       }
+    },
+    "version": {
+      "hash": "d7efadba123ba2cfa6cf1768a1db2a82b5a199190b1b9d344243d976e2b0f790",
+      "loaded_at": "[timestamp]"
     }
   }
 }

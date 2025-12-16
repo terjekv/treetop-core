@@ -7,23 +7,36 @@ expression: decision
     "policy": {
       "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"create_host\",\n    resource is Host\n) when {\n    resource.ip.isInRange(ip(\"192.168.0.0/24\"))\n};",
       "json": {
-        "action": {
+        "effect": "permit",
+        "principal": {
+          "op": "==",
           "entity": {
-            "id": "create_host",
-            "type": "Action"
-          },
-          "op": "=="
+            "type": "User",
+            "id": "alice"
+          }
+        },
+        "action": {
+          "op": "==",
+          "entity": {
+            "type": "Action",
+            "id": "create_host"
+          }
+        },
+        "resource": {
+          "op": "is",
+          "entity_type": "Host"
         },
         "conditions": [
           {
+            "kind": "when",
             "body": {
               "isInRange": [
                 {
                   ".": {
-                    "attr": "ip",
                     "left": {
                       "Var": "resource"
-                    }
+                    },
+                    "attr": "ip"
                   }
                 },
                 {
@@ -34,23 +47,14 @@ expression: decision
                   ]
                 }
               ]
-            },
-            "kind": "when"
+            }
           }
-        ],
-        "effect": "permit",
-        "principal": {
-          "entity": {
-            "id": "alice",
-            "type": "User"
-          },
-          "op": "=="
-        },
-        "resource": {
-          "entity_type": "Host",
-          "op": "is"
-        }
+        ]
       }
+    },
+    "version": {
+      "hash": "b70432e57a7a22979f36253ca672014fb2facc7933c734d82daaa2abe7b9bf1e",
+      "loaded_at": "[timestamp]"
     }
   }
 }

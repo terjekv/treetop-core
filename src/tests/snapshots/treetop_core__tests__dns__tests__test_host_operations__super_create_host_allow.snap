@@ -7,25 +7,29 @@ expression: decision
     "policy": {
       "literal": "@id(\"global.super_admin_allow_all_policy\")\npermit (\n    principal == User::\"super\",\n    action,\n    resource\n);",
       "json": {
+        "effect": "permit",
+        "principal": {
+          "op": "==",
+          "entity": {
+            "type": "User",
+            "id": "super"
+          }
+        },
         "action": {
           "op": "All"
         },
-        "annotations": {
-          "id": "global.super_admin_allow_all_policy"
-        },
-        "conditions": [],
-        "effect": "permit",
-        "principal": {
-          "entity": {
-            "id": "super",
-            "type": "User"
-          },
-          "op": "=="
-        },
         "resource": {
           "op": "All"
+        },
+        "conditions": [],
+        "annotations": {
+          "id": "global.super_admin_allow_all_policy"
         }
       }
+    },
+    "version": {
+      "hash": "d7efadba123ba2cfa6cf1768a1db2a82b5a199190b1b9d344243d976e2b0f790",
+      "loaded_at": "[timestamp]"
     }
   }
 }

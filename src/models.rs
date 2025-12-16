@@ -83,31 +83,61 @@ pub struct PermitPolicy {
     pub json: Value,
 }
 
-/// Allow or deny decision.
+/// Version metadata for the policy set used during an evaluation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
+pub struct PolicyVersion {
+    /// Hash of the policy source (e.g. SHA-256 of the policy text).
+    pub hash: String,
+    /// When this policy set was loaded into the engine.
+    pub loaded_at: String,
+}
+
+impl Display for PolicyVersion {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{} @ {})", self.hash, self.loaded_at)
+    }
+}
+
+/// Allow or deny decision, including the policy version used.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 pub enum Decision {
-    Allow { policy: PermitPolicy },
-    Deny,
+    Allow {
+        policy: PermitPolicy,
+        version: PolicyVersion,
+    },
+    Deny {
+        version: PolicyVersion,
+    },
 }
 
 impl Display for Decision {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
-            Decision::Allow { policy } => write!(f, "Allow({})", policy.literal),
-            Decision::Deny => write!(f, "Deny"),
+            Decision::Allow { policy, version } => {
+                write!(f, "Allow(hash={}; {})", version.hash, policy.literal)
+            }
+            Decision::Deny { version } => write!(f, "Deny(hash={})", version.hash),
         }
     }
 }
 
 pub trait FromDecisionWithPolicy {
-    fn from_decision_with_policy(response: cedar_policy::Decision, policy: PermitPolicy) -> Self;
+    fn from_decision_with_policy(
+        response: cedar_policy::Decision,
+        policy: PermitPolicy,
+        version: PolicyVersion,
+    ) -> Self;
 }
 
 impl FromDecisionWithPolicy for Decision {
-    fn from_decision_with_policy(decision: cedar_policy::Decision, policy: PermitPolicy) -> Self {
+    fn from_decision_with_policy(
+        decision: cedar_policy::Decision,
+        policy: PermitPolicy,
+        version: PolicyVersion,
+    ) -> Self {
         match decision {
-            cedar_policy::Decision::Allow => Decision::Allow { policy },
-            cedar_policy::Decision::Deny => Decision::Deny,
+            cedar_policy::Decision::Allow => Decision::Allow { policy, version },
+            cedar_policy::Decision::Deny => Decision::Deny { version },
         }
     }
 }

@@ -58,7 +58,7 @@ pub fn build_info() -> &'static BuildInfo {
         let version = format_human_version(pkg_ver, describe, dirty);
         let build_unix = option_env!("VERGEN_BUILD_TIMESTAMP").and_then(|s| s.parse().ok());
 
-        let git = if describe != "" {
+        let git = if !describe.is_empty() {
             Some(GitInfo {
                 describe,
                 sha,

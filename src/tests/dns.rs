@@ -6,7 +6,7 @@ mod tests {
 
     use crate::{
         Action, Decision, Principal, Request, Resource, User, engine::PolicyEngine,
-        models::AttrValue,
+        models::AttrValue, snapshot_decision,
     };
 
     const DNS_POLICY: &str = include_str!("../../testdata/dns.cedar");
@@ -89,9 +89,7 @@ mod tests {
         };
 
         let decision = engine.evaluate(&request).unwrap();
-        insta::with_settings!({sort_maps => true}, {
-            insta::assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     // As Alice has the `view_host` permission from both the `admins` and `users` groups,
@@ -110,6 +108,6 @@ mod tests {
                 .with_attr("ip", AttrValue::Ip("192.0.2.1".into())),
         };
         let decision = engine.evaluate(&request).unwrap();
-        assert_ne!(decision, Decision::Deny);
+        assert!(!matches!(decision, Decision::Deny { .. }));
     }
 }

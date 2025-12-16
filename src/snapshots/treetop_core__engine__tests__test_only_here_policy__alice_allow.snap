@@ -7,26 +7,30 @@ expression: decision
     "policy": {
       "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"only_here\",\n    resource\n);",
       "json": {
-        "action": {
-          "entity": {
-            "id": "only_here",
-            "type": "Action"
-          },
-          "op": "=="
-        },
-        "conditions": [],
         "effect": "permit",
         "principal": {
+          "op": "==",
           "entity": {
-            "id": "alice",
-            "type": "User"
-          },
-          "op": "=="
+            "type": "User",
+            "id": "alice"
+          }
+        },
+        "action": {
+          "op": "==",
+          "entity": {
+            "type": "Action",
+            "id": "only_here"
+          }
         },
         "resource": {
           "op": "All"
-        }
+        },
+        "conditions": []
       }
+    },
+    "version": {
+      "hash": "8ee801346ef35e003f5a68c2208335024adec814c18c9912f7aa483200e9b703",
+      "loaded_at": "[timestamp]"
     }
   }
 }

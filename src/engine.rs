@@ -3,38 +3,92 @@ use cedar_policy::{
     Request as CedarRequest,
 };
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use std::time::SystemTime;
 use std::vec;
 
 use crate::labels::LABEL_REGISTRY;
-use crate::models::{PermitPolicy, UserPolicies};
+use crate::models::{Decision, PermitPolicy, PolicyVersion, UserPolicies};
 use crate::traits::CedarAtom;
 use crate::{Groups, Principal};
-use crate::{
-    error::PolicyError,
-    loader,
-    models::{Decision, FromDecisionWithPolicy, Request},
-};
+use crate::{error::PolicyError, loader, models::FromDecisionWithPolicy, models::Request};
+use arc_swap::ArcSwap;
 
+use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
+
+/// Immutable snapshot of a compiled policy set, along with metadata.
+#[derive(Debug)]
+struct PolicySnapshot {
+    set: PolicySet,
+    version: PolicyVersion,
+}
+
+/// Convenience alias for a shared policy snapshot.
+type Snapshot = Arc<PolicySnapshot>;
+
+impl PolicySnapshot {
+    fn from_policy_text(policy_text: &str) -> Result<Self, PolicyError> {
+        let set = loader::compile_policy(policy_text)?;
+
+        let mut hasher = Sha256::new();
+        hasher.update(policy_text.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+
+        Ok(PolicySnapshot {
+            set,
+            version: PolicyVersion {
+                hash,
+                loaded_at: humantime::format_rfc3339(SystemTime::now()).to_string(),
+            },
+        })
+    }
+
+    fn policy_set(&self) -> &PolicySet {
+        &self.set
+    }
+
+    fn version(&self) -> PolicyVersion {
+        self.version.clone()
+    }
+}
 /// The main engine handle. Cloneable and thread-safe.
 #[derive(Clone)]
 pub struct PolicyEngine {
-    inner: Arc<RwLock<PolicySet>>,
+    /// Shared pointer to an `ArcSwap` holding the current `Snapshot`.
+    inner: Arc<ArcSwap<Snapshot>>,
+}
+
+impl From<PolicyEngine> for PolicyVersion {
+    fn from(engine: PolicyEngine) -> Self {
+        engine.current_version()
+    }
 }
 
 impl PolicyEngine {
     pub fn new_from_str(policy_text: &str) -> Result<Self, PolicyError> {
-        let set = loader::compile_policy(policy_text)?;
+        let snapshot: Snapshot = Arc::new(PolicySnapshot::from_policy_text(policy_text)?);
         Ok(PolicyEngine {
-            inner: Arc::new(RwLock::new(set)),
+            inner: Arc::new(ArcSwap::from(Arc::new(snapshot))),
         })
     }
 
     pub fn reload_from_str(&self, policy_text: &str) -> Result<(), PolicyError> {
-        let new_set = loader::compile_policy(policy_text)?;
-        *self.inner.write().unwrap() = new_set;
+        let new_snapshot: Snapshot = Arc::new(PolicySnapshot::from_policy_text(policy_text)?);
+        self.inner.store(Arc::new(new_snapshot));
         Ok(())
+    }
+
+    /// Get the current snapshot using a short-lived read lock, then drop the lock.
+    fn current_snapshot(&self) -> Snapshot {
+        // `load_full` returns `Arc<Arc<PolicySnapshot>>`; deref one level.
+        let outer = self.inner.load_full();
+        Arc::clone(&outer)
+    }
+
+    /// Get the current policy version.
+    pub fn current_version(&self) -> PolicyVersion {
+        self.current_snapshot().version()
     }
 
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
@@ -44,6 +98,10 @@ impl PolicyEngine {
             Principal::User(user) => user.groups().clone(),
             Principal::Group(_) => Groups::default(),
         };
+
+        let now = std::time::Instant::now();
+        let snapshot = self.current_snapshot();
+        let version = snapshot.version();
 
         debug!(
             event = "Request",
@@ -123,17 +181,23 @@ impl PolicyEngine {
                 .replace('\n', "")
         );
 
-        // 6. Run the authorizer
-        let guard = self.inner.read()?;
-        let result = Authorizer::new().is_authorized(&cedar_req, &guard, &entities);
+        // 6. Run the authorizer against the current immutable snapshot
+        let result = Authorizer::new().is_authorized(&cedar_req, &snapshot.set, &entities);
 
-        debug!(event = "Request", phase = "Result", result = ?result.decision());
+        debug!(
+            event = "Request",
+            phase = "Result",
+            time = now.elapsed().as_micros(),
+            result = ?result.decision(),
+            policy_hash = %version.hash,
+            policy_loaded_at = %version.loaded_at,
+        );
         let mut permit_policy = PermitPolicy::default();
 
         if result.decision() == cedar_policy::Decision::Allow {
             let reasons = result.diagnostics().reason();
             for reason in reasons {
-                let policy = guard.policy(reason);
+                let policy = snapshot.set.policy(reason);
                 if let Some(policy) = policy {
                     permit_policy.literal = policy.to_string().clone();
                     permit_policy.json = policy.to_json().unwrap_or_default();
@@ -156,6 +220,7 @@ impl PolicyEngine {
         Ok(Decision::from_decision_with_policy(
             result.decision(),
             permit_policy,
+            version,
         ))
     }
 
@@ -164,8 +229,8 @@ impl PolicyEngine {
         user: &str,
         namespace: Vec<String>,
     ) -> Result<UserPolicies, PolicyError> {
-        let guard = self.inner.read()?;
-        let policies = guard.policies();
+        let snapshot = self.current_snapshot();
+        let policies = snapshot.set.policies();
 
         // Join the user and then namespace into a ::-separated string
         let user_with_namespace = if namespace.is_empty() {
@@ -190,8 +255,8 @@ impl PolicyEngine {
     }
 
     pub fn policies(&self) -> Result<Vec<Policy>, PolicyError> {
-        let guard = self.inner.read()?;
-        Ok(guard.policies().cloned().collect())
+        let snapshot = self.current_snapshot();
+        Ok(snapshot.policy_set().policies().cloned().collect())
     }
 }
 
@@ -203,8 +268,8 @@ mod tests {
     use crate::labels::{LABEL_REGISTRY, RegexLabeler};
     use crate::models::AttrValue;
     use crate::models::{Decision::Allow, Decision::Deny, Group, Resource};
+    use crate::snapshot_decision;
     use crate::{Action, User};
-    use insta::assert_json_snapshot;
     use regex::Regex;
     use yare::parameterized;
 
@@ -401,9 +466,7 @@ permit (
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
-        insta::with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     #[parameterized(
@@ -423,9 +486,7 @@ permit (
                 .with_attr("ip", AttrValue::Ip(ip.into())),
         };
         let decision = engine.evaluate(&request).unwrap();
-        insta::with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     #[test]
@@ -440,7 +501,7 @@ permit (
         assert!(matches!(engine.evaluate(&request).unwrap(), Allow { .. }));
 
         engine.reload_from_str(TEST_POLICY_WITHOUT_BOB).unwrap();
-        assert_eq!(engine.evaluate(&request).unwrap(), Deny);
+        assert!(matches!(engine.evaluate(&request).unwrap(), Deny { .. }));
     }
 
     #[parameterized(
@@ -518,10 +579,7 @@ permit (
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
-
-        insta::with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     #[parameterized(
@@ -557,9 +615,7 @@ permit (
         };
 
         let decision = engine.evaluate(&request).unwrap();
-        insta::with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     #[parameterized(
@@ -577,9 +633,7 @@ permit (
         };
 
         let decision = engine.evaluate(&request).unwrap();
-        insta::with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     #[parameterized(
@@ -595,9 +649,7 @@ permit (
             resource: Resource::new("Gateway", resource_id.to_string()),
         };
         let decision = engine.evaluate(&request).unwrap();
-        insta::with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     #[parameterized(
@@ -618,9 +670,7 @@ permit (
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
-        insta::with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     #[parameterized(
@@ -642,9 +692,7 @@ permit (
         };
 
         let decision = engine.evaluate(&request).unwrap();
-        insta::with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     #[test]
@@ -656,9 +704,7 @@ permit (
             resource: Resource::new("Photo", "VacationPhoto94.jpg".to_string()),
         };
         let decision = engine.evaluate(&request).unwrap();
-        insta::with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     #[parameterized(
@@ -682,9 +728,7 @@ permit (
         };
 
         let decision = engine.evaluate(&request).unwrap();
-        insta::with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     #[parameterized(
@@ -707,9 +751,7 @@ permit (
         };
 
         let decision = engine.evaluate(&request).unwrap();
-        insta::with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(decision);
-        });
+        snapshot_decision!(decision);
     }
 
     #[parameterized(
@@ -726,5 +768,22 @@ permit (
         };
 
         assert!(engine.evaluate(&request).is_err());
+    }
+
+    #[test]
+    fn test_current_version_hash() {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
+        let version = engine.current_version();
+
+        let expected_hash = format!("{:x}", Sha256::digest(TEST_POLICY.as_bytes()));
+        assert_eq!(version.hash, expected_hash);
+    }
+
+    #[test]
+    fn test_policysnapshot_policies() {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
+        let snapshot = engine.current_snapshot();
+        let policies = snapshot.policy_set();
+        assert_eq!(policies.policies().count(), 2);
     }
 }

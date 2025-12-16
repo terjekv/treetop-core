@@ -7,25 +7,38 @@ expression: decision
     "policy": {
       "literal": "permit (\n    principal == User::\"bob\",\n    action == Action::\"create_host\",\n    resource is Host\n) when {\n    resource.nameLabels.contains(\"valid_web_name\") &&\n    resource.nameLabels.contains(\"example_domain\")\n};",
       "json": {
-        "action": {
+        "effect": "permit",
+        "principal": {
+          "op": "==",
           "entity": {
-            "id": "create_host",
-            "type": "Action"
-          },
-          "op": "=="
+            "type": "User",
+            "id": "bob"
+          }
+        },
+        "action": {
+          "op": "==",
+          "entity": {
+            "type": "Action",
+            "id": "create_host"
+          }
+        },
+        "resource": {
+          "op": "is",
+          "entity_type": "Host"
         },
         "conditions": [
           {
+            "kind": "when",
             "body": {
               "&&": {
                 "left": {
                   "contains": {
                     "left": {
                       ".": {
-                        "attr": "nameLabels",
                         "left": {
                           "Var": "resource"
-                        }
+                        },
+                        "attr": "nameLabels"
                       }
                     },
                     "right": {
@@ -37,10 +50,10 @@ expression: decision
                   "contains": {
                     "left": {
                       ".": {
-                        "attr": "nameLabels",
                         "left": {
                           "Var": "resource"
-                        }
+                        },
+                        "attr": "nameLabels"
                       }
                     },
                     "right": {
@@ -49,23 +62,14 @@ expression: decision
                   }
                 }
               }
-            },
-            "kind": "when"
+            }
           }
-        ],
-        "effect": "permit",
-        "principal": {
-          "entity": {
-            "id": "bob",
-            "type": "User"
-          },
-          "op": "=="
-        },
-        "resource": {
-          "entity_type": "Host",
-          "op": "is"
-        }
+        ]
       }
+    },
+    "version": {
+      "hash": "873ef4b7a321b86308d989432858e9c81ed47e9c98a42578ce6a3ea333594540",
+      "loaded_at": "[timestamp]"
     }
   }
 }

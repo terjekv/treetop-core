@@ -12,6 +12,7 @@
 //! use regex::Regex;
 //! use std::sync::Arc;
 //! use treetop_core::{Action, AttrValue, PolicyEngine, Request, Decision, User, Principal, Resource, RegexLabeler, LABEL_REGISTRY};
+//! use sha2::{Digest, Sha256};
 //!
 //! let policies = r#"
 //! permit (
@@ -51,9 +52,13 @@
 //! assert!(matches!(decision, Decision::Allow { .. }));
 //!
 //! // List all of alice's policies
-//! let policies = engine.list_policies_for_user("alice", vec![]).unwrap();
+//! let alice_policies = engine.list_policies_for_user("alice", vec![]).unwrap();
 //! // This value is also seralizable to JSON
-//! let json = serde_json::to_string(&policies).unwrap();
+//! let json = serde_json::to_string(&alice_policies).unwrap();
+//!
+//! // Check that the policy running is the expected version
+//! assert_eq!(engine.current_version().hash, format!("{:x}", Sha256::digest(policies)));
+//!
 //! ```
 //!
 //!
@@ -65,7 +70,8 @@ pub use engine::PolicyEngine;
 pub use error::PolicyError;
 pub use labels::{LABEL_REGISTRY, Labeler, RegexLabeler};
 pub use models::{
-    Action, AttrValue, Decision, Group, Groups, Principal, Request, Resource, User, UserPolicies,
+    Action, AttrValue, Decision, Group, Groups, PermitPolicy, PolicyVersion, Principal, Request,
+    Resource, User, UserPolicies,
 };
 
 mod build_info;

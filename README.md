@@ -106,6 +106,12 @@ permit (
  let decision = engine.evaluate(&request).unwrap();
  assert!(matches!(decision, Decision::Allow { .. }));
 
+ // Access policy version information
+ if let Decision::Allow { version, .. } = &decision {
+     println!("Policy hash: {}", version.hash);
+     println!("Policy loaded at: {}", version.loaded_at);
+ }
+
  // List all of alice's policies
  let policies = engine.list_policies_for_user("alice", vec![]).unwrap();
  // This value is also seralizable to JSON

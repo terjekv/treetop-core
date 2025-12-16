@@ -7,25 +7,29 @@ expression: decision
     "policy": {
       "literal": "@id(\"id_of_policy\")\npermit (\n    principal == User::\"alice\",\n    action, \n    resource\n);",
       "json": {
+        "effect": "permit",
+        "principal": {
+          "op": "==",
+          "entity": {
+            "type": "User",
+            "id": "alice"
+          }
+        },
         "action": {
           "op": "All"
         },
-        "annotations": {
-          "id": "id_of_policy"
-        },
-        "conditions": [],
-        "effect": "permit",
-        "principal": {
-          "entity": {
-            "id": "alice",
-            "type": "User"
-          },
-          "op": "=="
-        },
         "resource": {
           "op": "All"
+        },
+        "conditions": [],
+        "annotations": {
+          "id": "id_of_policy"
         }
       }
+    },
+    "version": {
+      "hash": "852f6a7634b8b382e732f7c6eab7376f447b2dc007b038c3f4af768c2fffcd70",
+      "loaded_at": "[timestamp]"
     }
   }
 }

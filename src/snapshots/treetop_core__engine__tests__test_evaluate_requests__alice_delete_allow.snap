@@ -7,40 +7,44 @@ expression: decision
     "policy": {
       "literal": "permit (\n    principal == User::\"alice\",\n    action in [Action::\"view\", Action::\"edit\", Action::\"delete\"],\n    resource == Photo::\"VacationPhoto94.jpg\"\n);",
       "json": {
-        "action": {
-          "entities": [
-            {
-              "id": "view",
-              "type": "Action"
-            },
-            {
-              "id": "edit",
-              "type": "Action"
-            },
-            {
-              "id": "delete",
-              "type": "Action"
-            }
-          ],
-          "op": "in"
-        },
-        "conditions": [],
         "effect": "permit",
         "principal": {
+          "op": "==",
           "entity": {
-            "id": "alice",
-            "type": "User"
-          },
-          "op": "=="
+            "type": "User",
+            "id": "alice"
+          }
+        },
+        "action": {
+          "op": "in",
+          "entities": [
+            {
+              "type": "Action",
+              "id": "view"
+            },
+            {
+              "type": "Action",
+              "id": "edit"
+            },
+            {
+              "type": "Action",
+              "id": "delete"
+            }
+          ]
         },
         "resource": {
+          "op": "==",
           "entity": {
-            "id": "VacationPhoto94.jpg",
-            "type": "Photo"
-          },
-          "op": "=="
-        }
+            "type": "Photo",
+            "id": "VacationPhoto94.jpg"
+          }
+        },
+        "conditions": []
       }
+    },
+    "version": {
+      "hash": "367a1bf718b961945a55eb68ef47778eab2db0ed787476147c9a77dd83833686",
+      "loaded_at": "[timestamp]"
     }
   }
 }

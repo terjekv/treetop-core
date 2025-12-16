@@ -7,30 +7,34 @@ expression: decision
     "policy": {
       "literal": "permit (\n    principal == User::\"bob\",\n    action == Action::\"view\",\n    resource == Photo::\"VacationPhoto94.jpg\"\n);",
       "json": {
-        "action": {
-          "entity": {
-            "id": "view",
-            "type": "Action"
-          },
-          "op": "=="
-        },
-        "conditions": [],
         "effect": "permit",
         "principal": {
+          "op": "==",
           "entity": {
-            "id": "bob",
-            "type": "User"
-          },
-          "op": "=="
+            "type": "User",
+            "id": "bob"
+          }
+        },
+        "action": {
+          "op": "==",
+          "entity": {
+            "type": "Action",
+            "id": "view"
+          }
         },
         "resource": {
+          "op": "==",
           "entity": {
-            "id": "VacationPhoto94.jpg",
-            "type": "Photo"
-          },
-          "op": "=="
-        }
+            "type": "Photo",
+            "id": "VacationPhoto94.jpg"
+          }
+        },
+        "conditions": []
       }
+    },
+    "version": {
+      "hash": "367a1bf718b961945a55eb68ef47778eab2db0ed787476147c9a77dd83833686",
+      "loaded_at": "[timestamp]"
     }
   }
 }

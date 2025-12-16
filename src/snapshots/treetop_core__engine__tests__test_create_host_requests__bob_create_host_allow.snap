@@ -7,25 +7,38 @@ expression: decision
     "policy": {
       "literal": "permit (\n    principal == User::\"bob\",\n    action == Action::\"create_host\",\n    resource is Host\n) when {\n    resource.name like \"bob*\" &&\n    resource.ip.isInRange(ip(\"192.0.0.0/24\"))\n};",
       "json": {
-        "action": {
+        "effect": "permit",
+        "principal": {
+          "op": "==",
           "entity": {
-            "id": "create_host",
-            "type": "Action"
-          },
-          "op": "=="
+            "type": "User",
+            "id": "bob"
+          }
+        },
+        "action": {
+          "op": "==",
+          "entity": {
+            "type": "Action",
+            "id": "create_host"
+          }
+        },
+        "resource": {
+          "op": "is",
+          "entity_type": "Host"
         },
         "conditions": [
           {
+            "kind": "when",
             "body": {
               "&&": {
                 "left": {
                   "like": {
                     "left": {
                       ".": {
-                        "attr": "name",
                         "left": {
                           "Var": "resource"
-                        }
+                        },
+                        "attr": "name"
                       }
                     },
                     "pattern": [
@@ -46,10 +59,10 @@ expression: decision
                   "isInRange": [
                     {
                       ".": {
-                        "attr": "ip",
                         "left": {
                           "Var": "resource"
-                        }
+                        },
+                        "attr": "ip"
                       }
                     },
                     {
@@ -62,23 +75,14 @@ expression: decision
                   ]
                 }
               }
-            },
-            "kind": "when"
+            }
           }
-        ],
-        "effect": "permit",
-        "principal": {
-          "entity": {
-            "id": "bob",
-            "type": "User"
-          },
-          "op": "=="
-        },
-        "resource": {
-          "entity_type": "Host",
-          "op": "is"
-        }
+        ]
       }
+    },
+    "version": {
+      "hash": "fb81c2dc092d8f992659f666106894bb0cde22932f2ee2a819b4d8cbc81bfc94",
+      "loaded_at": "[timestamp]"
     }
   }
 }
