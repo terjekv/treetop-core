@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `LabelRegistry` struct for managing resource labelers with per-engine ownership
+- `LabelRegistryBuilder` with typestate pattern for safe progressive labeler initialization
+- `PolicyEngine::with_label_registry()` method to configure labels at engine creation
+- `PolicyEngine::set_label_registry()` method to update labels on existing engines
+- `PolicyEngine::label_registry()` method to access the configured label registry
+- Enhanced error handling with better context propagation
+- `CedarType` enum centralizing Cedar entity type names (User, Action, Group, Resource, Principal)
+- Comprehensive test coverage improvements:
+  - Concurrency and thread-safety tests
+  - Error handling and context validation tests
+  - FromStr implementation tests with edge cases
+  - Label registry behavior tests
+
+### Changed
+
+- **BREAKING**: Label registry moved from global static to per-engine instance
+  - Global `init_label_registry()` and `apply_labels()` functions removed.
+  - Users must migrate to `LabelRegistryBuilder` with `PolicyEngine::with_label_registry()`
+- **BREAKING**: Labeling now happens per-engine rather than globally
+  - Each `PolicyEngine` instance can have its own configured labels
+  - Label application during evaluation uses the engine's registry if configured
+- Replaced `once_cell` dependency with standard library `OnceLock` (Rust 1.70+)
+- Improved error context with detailed Cedar error information
+- Magic strings replaced with `CedarType` enum throughout codebase
+- `PolicyEngine::Clone` is preserved for backward compatibility; use `Arc<PolicyEngine>` for idiomatic thread sharing
+
+### Migration Guide
+
+**Old API** (no longer supported):
+
+```rust
+// Initialize global registry once
+init_label_registry(vec![
+    Arc::new(labeler1),
+    Arc::new(labeler2),
+]);
+
+let engine = PolicyEngine::new_from_str(policies)?;
+let decision = engine.evaluate(&request);
+```
+
+**New API** (with single or multiple labelers):
+
+```rust
+use std::sync::Arc;
+
+// Single labeler
+let engine = PolicyEngine::new_from_str(policies)?
+    .with_label_registry(
+        LabelRegistryBuilder::new()
+            .add_labeler(Arc::new(labeler))
+            .build()
+    );
+
+let decision = engine.evaluate(&request);
+```
+
+Or with multiple labelers:
+
+```rust
+let mut builder = LabelRegistryBuilder::new();
+for labeler in vec![labeler1, labeler2, labeler3] {
+    builder = builder.add_labeler(Arc::new(labeler));
+}
+
+let engine = PolicyEngine::new_from_str(policies)?
+    .with_label_registry(builder.build());
+
+let decision = engine.evaluate(&request);
+```
+
 ## [0.0.12] - 2025-12-04
 
 ### Added

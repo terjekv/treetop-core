@@ -67,7 +67,7 @@ permit (
 ```rust
  use regex::Regex;
  use std::sync::Arc;
- use treetop_core::{Action, AttrValue, PolicyEngine, Request, Decision, User, Principal, Resource, RegexLabeler, LABEL_REGISTRY};
+ use treetop_core::{Action, AttrValue, PolicyEngine, Request, Decision, User, Principal, Resource, RegexLabeler, LabelRegistryBuilder};
 
  let policies = r#"
  permit (
@@ -86,14 +86,17 @@ permit (
      ("in_domain".to_string(), Regex::new(r"example\.com$").unwrap()),
      ("webserver".to_string(), Regex::new(r"^web-\d+").unwrap()),
  ];
- LABEL_REGISTRY.load(vec![Arc::new(RegexLabeler::new(
-     "Host",
-     "name",
-     "nameLabels",
-     patterns.into_iter().collect(),
- ))]);
+ let label_registry = LabelRegistryBuilder::new()
+     .add_labeler(Arc::new(RegexLabeler::new(
+         "Host",
+         "name",
+         "nameLabels",
+         patterns.into_iter().collect(),
+     )))
+     .build();
 
- let engine = PolicyEngine::new_from_str(&policies).unwrap();
+ let engine = PolicyEngine::new_from_str(&policies).unwrap()
+     .with_label_registry(label_registry);
 
  let request = Request {
     principal: Principal::User(User::new("alice", None, None)), // No groups, no namespace

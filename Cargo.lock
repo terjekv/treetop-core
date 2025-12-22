@@ -1451,7 +1451,6 @@ dependencies = [
  "humantime",
  "insta",
  "itertools",
- "once_cell",
  "regex",
  "serde",
  "serde_json",

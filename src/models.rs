@@ -1,3 +1,13 @@
+//! Data model types for requests and Cedar entity conversion.
+//!
+//! Canonical string forms:
+//! - User: `User::"alice"` or `NS::User::"alice"` with optional groups `[admins,devs]`
+//! - Group: `Group::"admins"` or `NS::Group::"admins"`
+//! - Action: `Action::"create"` or `NS::Action::"create"`
+//! - Resource: `Kind::"id"` or `NS::Kind::"id"`
+//!
+//! Quoting rules: identity elements may be quoted; parsing accepts both
+//! quoted and unquoted forms where unambiguous.
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::marker::PhantomData;
@@ -11,6 +21,7 @@ use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
+use crate::cedar_types::CedarType;
 use crate::error::PolicyError;
 use crate::traits::CedarAtom;
 
@@ -59,7 +70,7 @@ impl CedarAtom for Principal {
         }
     }
     fn cedar_type() -> &'static str {
-        "Principal"
+        CedarType::Principal.as_str()
     }
     fn cedar_id(&self) -> String {
         match self {
@@ -196,13 +207,16 @@ impl FromStr for Resource {
         let parts = split_string_into_cedar_parts(s)?;
         let kind = parts
             .type_part
-            .ok_or_else(|| PolicyError::InvalidFormat(format!("Missing type in `{s}`")))?;
+            .ok_or_else(|| PolicyError::InvalidFormat(
+                format!("Failed to parse resource: missing type in '{s}' (expected format: ResourceType::resource_id or Namespace::ResourceType::resource_id)")
+            ))?;
 
         Ok(Resource::new(kind, parts.id.to_string()))
     }
 }
 
 impl Resource {
+    /// Create a new resource with `kind` and `id`.
     pub fn new(kind: impl Into<String>, id: impl Into<String>) -> Self {
         Self {
             kind: kind.into(),
@@ -211,6 +225,10 @@ impl Resource {
         }
     }
 
+    /// Add an attribute to the resource, returning the updated value.
+    ///
+    /// For `AttrValue::Set`, values are stored as-is; duplicates are not
+    /// automatically de-duplicated.
     pub fn with_attr(mut self, k: impl Into<String>, v: AttrValue) -> Self {
         self.attrs.insert(k.into(), v);
         self
@@ -231,7 +249,7 @@ impl Resource {
 
 impl CedarAtom for Resource {
     fn cedar_type() -> &'static str {
-        "Resource"
+        CedarType::Resource.as_str()
     }
 
     fn cedar_id(&self) -> String {
@@ -239,7 +257,13 @@ impl CedarAtom for Resource {
     }
 
     fn cedar_entity_uid(&self) -> Result<EntityUid, PolicyError> {
-        EntityUid::from_str(&self.cedar_id()).map_err(|e| PolicyError::ParseError(e.to_string()))
+        let cedar_id = self.cedar_id();
+        EntityUid::from_str(&cedar_id).map_err(|e| {
+            PolicyError::ParseError(format!(
+                "Failed to parse resource entity UID '{}': {}",
+                cedar_id, e
+            ))
+        })
     }
 
     fn cedar_attr(&self) -> Result<HashMap<String, RestrictedExpression>, PolicyError> {
@@ -379,7 +403,7 @@ impl User {
 
 impl CedarAtom for User {
     fn cedar_type() -> &'static str {
-        "User"
+        CedarType::User.as_str()
     }
 
     fn cedar_id(&self) -> String {
@@ -417,7 +441,7 @@ impl FromStr for User {
         if let Some(type_part) = parts.type_part {
             if type_part != expected {
                 return Err(PolicyError::InvalidFormat(format!(
-                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
+                    "Failed to parse user: expected type '{expected}', found type '{type_part}' in '{s}' (expected format: [Namespace::]*User::user_id[group1,group2,...])"
                 )));
             }
         }
@@ -455,7 +479,7 @@ impl Action {
 
 impl CedarAtom for Action {
     fn cedar_type() -> &'static str {
-        "Action"
+        CedarType::Action.as_str()
     }
 
     fn cedar_id(&self) -> String {
@@ -474,7 +498,7 @@ impl FromStr for Action {
         if let Some(type_part) = parts.type_part {
             if type_part != expected {
                 return Err(PolicyError::InvalidFormat(format!(
-                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
+                    "Failed to parse action: expected type '{expected}', found type '{type_part}' in '{s}' (expected format: [Namespace::]*Action::action_id)"
                 )));
             }
         }
@@ -517,7 +541,7 @@ impl Display for Group {
 
 impl CedarAtom for Group {
     fn cedar_type() -> &'static str {
-        "Group"
+        CedarType::Group.as_str()
     }
 
     fn cedar_id(&self) -> String {
@@ -536,7 +560,7 @@ impl FromStr for Group {
         if let Some(type_part) = parts.type_part {
             if type_part != expected {
                 return Err(PolicyError::InvalidFormat(format!(
-                    "Expected type `{expected}`, found `{type_part}` in `{s}`"
+                    "Failed to parse group: expected type '{expected}', found type '{type_part}' in '{s}' (expected format: [Namespace::]*Group::group_id)"
                 )));
             }
         }
@@ -550,6 +574,7 @@ impl FromStr for Group {
 pub struct Groups(Vec<Group>);
 
 impl Groups {
+    /// Construct a `Groups` list from names, with an optional shared namespace.
     pub fn new<I, S>(groups: I, namespace: Option<Vec<String>>) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -916,5 +941,237 @@ mod tests {
         insta::with_settings!({sort_maps => true}, {
             assert_json_snapshot!(serialized);
         });
+    }
+
+    // ============================================================================
+    // FromStr Implementation Tests - Special Characters & Edge Cases
+    // ============================================================================
+
+    #[parameterized(
+        user_with_email = { r#"User::"alice@example.com""#, "alice@example.com" },
+        user_with_special_chars = { r#"User::"alice-smith_123""#, "alice-smith_123" },
+        user_with_spaces = { r#"User::"Alice Smith""#, "Alice Smith" },
+    )]
+    fn test_fromstr_user_special_chars(input: &str, expected_id: &str) {
+        let user = User::from_str(input).unwrap();
+        assert_eq!(user.id.id(), expected_id);
+    }
+
+    #[test]
+    fn test_fromstr_action_with_special_chars() {
+        let action = Action::from_str(r#"Action::"create-host_v2""#).unwrap();
+        assert_eq!(action.id.id(), "create-host_v2");
+    }
+
+    #[test]
+    fn test_fromstr_group_with_special_chars() {
+        let group = Group::from_str(r#"Group::"team-alpha_2024""#).unwrap();
+        assert_eq!(group.id.id(), "team-alpha_2024");
+    }
+
+    #[test]
+    fn test_fromstr_resource_with_colon_in_id() {
+        let resource = Resource::from_str(r#"Host::"web-01:8080""#).unwrap();
+        assert_eq!(resource.id(), "web-01:8080");
+    }
+
+    #[parameterized(
+        user_rejects_action = { r#"Action::"alice""# },
+        user_rejects_group = { r#"Group::"admins""# },
+    )]
+    fn test_fromstr_user_rejects_wrong_type(input: &str) {
+        let result = User::from_str(input);
+        assert!(result.is_err());
+        if let Err(PolicyError::InvalidFormat(msg)) = result {
+            assert!(msg.contains("User"));
+        } else {
+            panic!("Expected InvalidFormat error");
+        }
+    }
+
+    #[parameterized(
+        action_rejects_user = { r#"User::"read""# },
+        action_rejects_group = { r#"Group::"admins""# },
+    )]
+    fn test_fromstr_action_rejects_wrong_type(input: &str) {
+        let result = Action::from_str(input);
+        assert!(result.is_err());
+        if let Err(PolicyError::InvalidFormat(msg)) = result {
+            assert!(msg.contains("Action"));
+        } else {
+            panic!("Expected InvalidFormat error");
+        }
+    }
+
+    #[parameterized(
+        group_rejects_user = { r#"User::"admins""# },
+        group_rejects_action = { r#"Action::"create""# },
+    )]
+    fn test_fromstr_group_rejects_wrong_type(input: &str) {
+        let result = Group::from_str(input);
+        assert!(result.is_err());
+        if let Err(PolicyError::InvalidFormat(msg)) = result {
+            assert!(msg.contains("Group"));
+        } else {
+            panic!("Expected InvalidFormat error");
+        }
+    }
+
+    #[parameterized(
+        user_no_type = { r#""alice""#, r#""alice""# },
+        user_malformed_no_id = { r#"User::"#, "" },
+        user_empty_string = { "", "" },
+    )]
+    fn test_fromstr_edge_cases(input: &str, expected_id: &str) {
+        let user = User::from_str(input).unwrap();
+        assert_eq!(user.id.id(), expected_id);
+    }
+
+    #[test]
+    fn test_fromstr_user_with_groups_and_special_chars() {
+        let user = User::from_str(r#"User::"alice@example.com"[team-alpha,group_123]"#).unwrap();
+        assert_eq!(user.id.id(), "alice@example.com");
+        assert_eq!(user.groups().0.len(), 2);
+    }
+
+    #[test]
+    fn test_fromstr_deeply_nested_namespace() {
+        let user = User::from_str(r#"A::B::C::D::E::User::"alice""#).unwrap();
+        assert_eq!(user.id.namespace().len(), 5);
+        assert_eq!(user.id.namespace(), &["A", "B", "C", "D", "E"]);
+    }
+
+    #[test]
+    fn test_fromstr_namespace_with_numbers() {
+        let action = Action::from_str(r#"NS1::NS2::Action::"read""#).unwrap();
+        assert_eq!(action.id.namespace().len(), 2);
+        assert_eq!(action.id.namespace(), &["NS1", "NS2"]);
+    }
+
+    // ============================================================================
+    // Additional Edge Case Tests
+    // ============================================================================
+
+    #[test]
+    fn test_attrvalue_set_with_mixed_types() {
+        let set = AttrValue::Set(vec![
+            AttrValue::String("test".into()),
+            AttrValue::Long(42),
+            AttrValue::Bool(true),
+        ]);
+
+        let re = set.to_re();
+        assert!(format!("{:?}", re).contains("test"));
+    }
+
+    #[test]
+    fn test_attrvalue_nested_sets() {
+        let inner_set = AttrValue::Set(vec![
+            AttrValue::String("a".into()),
+            AttrValue::String("b".into()),
+        ]);
+
+        let outer_set = AttrValue::Set(vec![inner_set, AttrValue::String("c".into())]);
+
+        let _re = outer_set.to_re();
+        // Just verify it doesn't panic
+    }
+
+    #[test]
+    fn test_resource_kind_with_double_colon() {
+        let resource = Resource::new("Database::Table", "users");
+        assert_eq!(resource.kind(), "Database::Table");
+        assert!(resource.cedar_id().contains("Database::Table"));
+    }
+
+    #[test]
+    fn test_qualified_id_display() {
+        let user_id = UserId::new("alice", Some(vec!["ACME".into()]));
+        let display = format!("{}", user_id);
+        assert_eq!(display, "alice");
+    }
+
+    #[test]
+    fn test_qualified_id_fmt_qualified() {
+        let user_id = UserId::new("alice", Some(vec!["ACME".into(), "Engineering".into()]));
+        let qualified = user_id.fmt_qualified("User");
+        assert_eq!(qualified, r#"ACME::Engineering::User::"alice""#);
+    }
+
+    #[test]
+    fn test_groups_default() {
+        let groups = Groups::default();
+        assert_eq!(groups.0.len(), 0);
+        // Empty groups displays as "[]"
+        assert_eq!(groups.to_string(), "[]");
+    }
+
+    #[test]
+    fn test_groups_display_multiple() {
+        let groups = Groups::new(
+            vec!["admins".to_string(), "developers".to_string()],
+            Some(vec!["ACME".into()]),
+        );
+        let display = groups.to_string();
+        assert!(display.contains("admins"));
+        assert!(display.contains("developers"));
+    }
+
+    #[test]
+    fn test_principal_display_user() {
+        let principal = Principal::User(User::new("alice", None, None));
+        let display = principal.to_string();
+        assert!(display.contains("User"));
+        assert!(display.contains("alice"));
+    }
+
+    #[test]
+    fn test_principal_display_group() {
+        let principal = Principal::Group(Group::new("admins", None));
+        let display = principal.to_string();
+        assert!(display.contains("Group"));
+        assert!(display.contains("admins"));
+    }
+
+    #[test]
+    fn test_decision_display_allow() {
+        let policy = PermitPolicy {
+            literal: "permit (...)".to_string(),
+            json: serde_json::json!({}),
+        };
+        let version = PolicyVersion {
+            hash: "abc123".to_string(),
+            loaded_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        let decision = Decision::Allow {
+            policy: policy.clone(),
+            version: version.clone(),
+        };
+        let display = decision.to_string();
+        assert!(display.contains("Allow"));
+        assert!(display.contains("abc123"));
+    }
+
+    #[test]
+    fn test_decision_display_deny() {
+        let version = PolicyVersion {
+            hash: "abc123".to_string(),
+            loaded_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        let decision = Decision::Deny { version };
+        let display = decision.to_string();
+        assert!(display.contains("Deny"));
+        assert!(display.contains("abc123"));
+    }
+
+    #[test]
+    fn test_policy_version_display() {
+        let version = PolicyVersion {
+            hash: "abc123def456".to_string(),
+            loaded_at: "2024-01-01T12:00:00Z".to_string(),
+        };
+        let display = version.to_string();
+        assert!(display.contains("abc123def456"));
+        assert!(display.contains("2024-01-01T12:00:00Z"));
     }
 }

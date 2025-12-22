@@ -1,14 +1,21 @@
 use arc_swap::ArcSwap;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
 
 use crate::models::{AttrValue, Resource};
 
+/// Trait for objects that can label resources based on their attributes.
+///
+/// Implementations should be fast and side-effect free beyond mutating the
+/// provided `Resource`'s attributes. Repeated application should be safe and
+/// ideally idempotent.
 pub trait Labeler: Send + Sync {
+    /// Returns true if this labeler applies to resources of the given kind.
+    ///
     /// e.g. "Host", "Database::Table"; you can also support wildcard/globs if you want.
     fn applies_to(&self, kind: &str) -> bool;
-    /// Mutates the resource by injecting derived attributes (e.g., sets of labels)
+
+    /// Mutates the resource by injecting derived attributes (e.g., sets of labels).
     fn apply(&self, res: &mut Resource);
 }
 
@@ -27,6 +34,12 @@ pub struct RegexLabeler {
 }
 
 impl RegexLabeler {
+    /// Create a regex-based labeler.
+    ///
+    /// - `kind`: resource kind this applies to (e.g., "Host")
+    /// - `field`: attribute to read from (e.g., "name")
+    /// - `output`: attribute to write labels to (e.g., "nameLabels")
+    /// - `table`: vector of `(label, regex)` pairs
     #[allow(dead_code)]
     pub fn new(
         kind: impl Into<String>,
@@ -77,6 +90,9 @@ pub struct LabelRegistry {
 }
 impl LabelRegistry {
     /// Applies all labelers in the registry to the given resource.
+    ///
+    /// Labelers run in insertion order. If multiple labelers target the same
+    /// output set attribute, values are appended.
     pub fn apply(&self, res: &mut Resource) {
         let snapshot = self.inner.load();
         let kind_owned = res.kind().to_owned();
@@ -89,15 +105,70 @@ impl LabelRegistry {
 
     /// Loads a set of labelers into the registry, atomically.
     ///
-    /// All previously loaded labelers will be replaced.
-    pub fn load(&self, labelers: Vec<Arc<dyn Labeler>>) {
+    /// Replaces all prior labelers in a single swap. New `evaluate()` calls use
+    /// the new set immediately; in-flight evaluations continue with the old set.
+    pub fn reload(&self, labelers: Vec<Arc<dyn Labeler>>) {
         self.inner.store(Arc::new(labelers));
     }
 }
 
-pub static LABEL_REGISTRY: Lazy<LabelRegistry> = Lazy::new(|| LabelRegistry {
-    inner: ArcSwap::from_pointee(Vec::new()),
-});
+/// Builder for creating a LabelRegistry with labelers.
+///
+/// This uses a builder pattern to ensure labelers are properly initialized
+/// before the registry is used.
+///
+/// # Example
+///
+/// ```rust
+/// use std::sync::Arc;
+/// use treetop_core::{LabelRegistryBuilder, RegexLabeler};
+/// use regex::Regex;
+///
+/// let registry = LabelRegistryBuilder::new()
+///     .add_labeler(Arc::new(RegexLabeler::new(
+///         "Host",
+///         "name",
+///         "nameLabels",
+///         vec![("prod".to_string(), Regex::new(r"\.prod\.").unwrap())],
+///     )))
+///     .build();
+/// ```
+pub struct LabelRegistryBuilder {
+    labelers: Vec<Arc<dyn Labeler>>,
+}
+
+impl LabelRegistryBuilder {
+    /// Create a new, empty label registry builder.
+    pub fn new() -> Self {
+        Self {
+            labelers: Vec::new(),
+        }
+    }
+
+    /// Add a labeler to the registry.
+    ///
+    /// This can be called repeatedly to build up a registry before `build()`.
+    pub fn add_labeler(mut self, labeler: Arc<dyn Labeler>) -> Self {
+        self.labelers.push(labeler);
+        self
+    }
+
+    /// Build the label registry.
+    ///
+    /// Consumes the builder and returns an initialized registry ready to use
+    /// with `PolicyEngine::with_label_registry()`.
+    pub fn build(self) -> LabelRegistry {
+        LabelRegistry {
+            inner: ArcSwap::from_pointee(self.labelers),
+        }
+    }
+}
+
+impl Default for LabelRegistryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[cfg(test)]
 mod tests {

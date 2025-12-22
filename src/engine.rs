@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use std::vec;
 
-use crate::labels::LABEL_REGISTRY;
+use crate::labels::LabelRegistry;
 use crate::models::{Decision, PermitPolicy, PolicyVersion, UserPolicies};
 use crate::traits::CedarAtom;
 use crate::{Groups, Principal};
@@ -52,15 +52,30 @@ impl PolicySnapshot {
         self.version.clone()
     }
 }
-/// The main engine handle. Cloneable and thread-safe.
+/// The main engine handle. Thread-safe and cheaply cloneable.
+///
+/// Cloning is cheap (just increments Arc refcounts), but for multithreaded
+/// applications, wrapping in `Arc<PolicyEngine>` and using `Arc::clone()`
+/// is more idiomatic and makes ownership clearer.
+///
+/// For single-threaded use or when passing the engine to a single thread,
+/// you can simply clone it directly.
 #[derive(Clone)]
 pub struct PolicyEngine {
     /// Shared pointer to an `ArcSwap` holding the current `Snapshot`.
     inner: Arc<ArcSwap<Snapshot>>,
+    /// Optional label registry for augmenting resources with derived attributes.
+    label_registry: Option<Arc<LabelRegistry>>,
 }
 
 impl From<PolicyEngine> for PolicyVersion {
     fn from(engine: PolicyEngine) -> Self {
+        engine.current_version()
+    }
+}
+
+impl From<&PolicyEngine> for PolicyVersion {
+    fn from(engine: &PolicyEngine) -> Self {
         engine.current_version()
     }
 }
@@ -70,7 +85,28 @@ impl PolicyEngine {
         let snapshot: Snapshot = Arc::new(PolicySnapshot::from_policy_text(policy_text)?);
         Ok(PolicyEngine {
             inner: Arc::new(ArcSwap::from(Arc::new(snapshot))),
+            label_registry: None,
         })
+    }
+
+    /// Create a new policy engine with a label registry.
+    ///
+    /// This is a convenience method that combines `new_from_str` and `with_label_registry`.
+    pub fn with_label_registry(mut self, registry: LabelRegistry) -> Self {
+        self.label_registry = Some(Arc::new(registry));
+        self
+    }
+
+    /// Set or replace the label registry for this engine.
+    ///
+    /// This allows updating the labelers after the engine has been created.
+    pub fn set_label_registry(&mut self, registry: LabelRegistry) {
+        self.label_registry = Some(Arc::new(registry));
+    }
+
+    /// Get a reference to the label registry, if one is configured.
+    pub fn label_registry(&self) -> Option<&LabelRegistry> {
+        self.label_registry.as_deref()
     }
 
     pub fn reload_from_str(&self, policy_text: &str) -> Result<(), PolicyError> {
@@ -87,10 +123,65 @@ impl PolicyEngine {
     }
 
     /// Get the current policy version.
+    ///
+    /// The `hash` is computed from the policy text, and `loaded_at` reflects
+    /// when this snapshot was installed.
     pub fn current_version(&self) -> PolicyVersion {
         self.current_snapshot().version()
     }
 
+    /// Evaluate a policy request against the currently loaded policy set.
+    ///
+    /// This method performs a complete Cedar policy evaluation:
+    /// 1. Applies any registered labelers to augment resource attributes
+    /// 2. Constructs Cedar entities for the principal (including groups), action, and resource
+    /// 3. Executes the Cedar authorization decision
+    /// 4. Returns either `Allow` (with the matching policy) or `Deny`, both including version metadata
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The authorization request containing the principal, action, and resource
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Decision::Allow)` - If at least one permit policy matches and no forbid policies match
+    /// * `Ok(Decision::Deny)` - If no permit policies match or if a forbid policy matches
+    /// * `Err(PolicyError)` - If there's an error constructing entities, parsing the request, or during evaluation
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use treetop_core::{PolicyEngine, Request, Principal, User, Action, Resource, Decision};
+    ///
+    /// let policies = r#"
+    ///     permit (
+    ///         principal == User::"alice",
+    ///         action == Action::"read",
+    ///         resource == Document::"doc1"
+    ///     );
+    /// "#;
+    ///
+    /// let engine = PolicyEngine::new_from_str(policies).unwrap();
+    ///
+    /// let request = Request {
+    ///     principal: Principal::User(User::new("alice", None, None)),
+    ///     action: Action::new("read", None),
+    ///     resource: Resource::new("Document", "doc1"),
+    /// };
+    ///
+    /// let decision = engine.evaluate(&request).unwrap();
+    /// assert!(matches!(decision, Decision::Allow { .. }));
+    ///
+    /// // Access version information
+    /// if let Decision::Allow { version, .. } = decision {
+    ///     println!("Allowed by policy version: {}", version.hash);
+    /// }
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and lock-free. Multiple threads can evaluate requests
+    /// concurrently without blocking each other.
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
         let schema: Option<&cedar_policy::Schema> = None;
 
@@ -114,7 +205,11 @@ impl PolicyEngine {
 
         // resource is &request.resource; take a working copy so we can mutate attrs with labels
         let mut resource_dyn = request.resource.clone();
-        LABEL_REGISTRY.apply(&mut resource_dyn);
+
+        // Apply labels if a registry is configured
+        if let Some(registry) = &self.label_registry {
+            registry.apply(&mut resource_dyn);
+        }
 
         // Build resource entity from the (now augmented) attrs
 
@@ -224,6 +319,11 @@ impl PolicyEngine {
         ))
     }
 
+    /// List all policies that may apply to a given user (optionally namespaced).
+    ///
+    /// This is useful for diagnostics and tooling that want to show or export
+    /// effective policies for a principal. It matches `principal == User::..`
+    /// and `principal == Any` constraints.
     pub fn list_policies_for_user(
         &self,
         user: &str,
@@ -265,7 +365,7 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use crate::labels::{LABEL_REGISTRY, RegexLabeler};
+    use crate::labels::{LabelRegistryBuilder, RegexLabeler};
     use crate::models::AttrValue;
     use crate::models::{Decision::Allow, Decision::Deny, Group, Resource};
     use crate::snapshot_decision;
@@ -593,7 +693,6 @@ permit (
 
     )]
     fn test_policy_with_host_patterns(username: &str, host_name: &str) {
-        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_HOST_PATTERNS).unwrap();
         let patterns = vec![
             ("valid_web_name".to_string(), Regex::new(r"^web.*").unwrap()),
             (
@@ -604,7 +703,13 @@ permit (
         let labeler =
             RegexLabeler::new("Host", "name", "nameLabels", patterns.into_iter().collect());
 
-        LABEL_REGISTRY.load(vec![Arc::new(labeler)]);
+        let label_registry = LabelRegistryBuilder::new()
+            .add_labeler(Arc::new(labeler))
+            .build();
+
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_HOST_PATTERNS)
+            .unwrap()
+            .with_label_registry(label_registry);
 
         let request = Request {
             principal: Principal::User(User::new(username, None, None)),
@@ -785,5 +890,495 @@ permit (
         let snapshot = engine.current_snapshot();
         let policies = snapshot.policy_set();
         assert_eq!(policies.policies().count(), 2);
+    }
+
+    #[test]
+    fn test_concurrent_evaluation() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let policies = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"read",
+                resource == Document::"doc1"
+            );
+        "#;
+
+        let engine = Arc::new(PolicyEngine::new_from_str(policies).unwrap());
+        let mut handles = vec![];
+
+        // Spawn 10 threads, each doing 100 evaluations
+        for i in 0..10 {
+            let engine_clone = Arc::clone(&engine);
+            let handle = thread::spawn(move || {
+                for _ in 0..100 {
+                    let request = Request {
+                        principal: Principal::User(User::new("alice", None, None)),
+                        action: Action::new("read", None),
+                        resource: Resource::new("Document", format!("doc{}", i % 5)),
+                    };
+                    let decision = engine_clone.evaluate(&request);
+                    assert!(decision.is_ok());
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_policy_reload_during_evaluation() {
+        use std::sync::Arc;
+        use std::thread;
+        use std::time::Duration;
+
+        let initial_policy = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"read",
+                resource == Document::"doc1"
+            );
+        "#;
+
+        let updated_policy = r#"
+            permit (
+                principal == User::"bob",
+                action == Action::"write",
+                resource == Document::"doc2"
+            );
+        "#;
+
+        let engine = Arc::new(PolicyEngine::new_from_str(initial_policy).unwrap());
+        let engine_eval = Arc::clone(&engine);
+        let engine_reload = Arc::clone(&engine);
+
+        // Thread 1: Continuously evaluate
+        let eval_handle = thread::spawn(move || {
+            for _ in 0..100 {
+                let request = Request {
+                    principal: Principal::User(User::new("alice", None, None)),
+                    action: Action::new("read", None),
+                    resource: Resource::new("Document", "doc1"),
+                };
+                let _ = engine_eval.evaluate(&request);
+                thread::sleep(Duration::from_micros(10));
+            }
+        });
+
+        // Thread 2: Reload policy multiple times
+        let reload_handle = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(5));
+            for _ in 0..10 {
+                let _ = engine_reload.reload_from_str(updated_policy);
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        eval_handle.join().unwrap();
+        reload_handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_concurrent_label_registry_access() {
+        use std::thread;
+
+        let patterns = vec![("test_label".to_string(), Regex::new(r"test").unwrap())];
+        let labeler = RegexLabeler::new("Host", "name", "nameLabels", patterns);
+
+        let label_registry = Arc::new(
+            LabelRegistryBuilder::new()
+                .add_labeler(Arc::new(labeler))
+                .build(),
+        );
+
+        let mut handles = vec![];
+
+        // Multiple threads applying labels
+        for i in 0..5 {
+            let registry = Arc::clone(&label_registry);
+            let handle = thread::spawn(move || {
+                let mut resource = Resource::new("Host", format!("test-{}", i))
+                    .with_attr("name", AttrValue::String(format!("test-{}", i)));
+
+                registry.apply(&mut resource);
+
+                // Verify labels were applied
+                if let Some(AttrValue::Set(labels)) = resource.attrs().get("nameLabels") {
+                    assert!(!labels.is_empty());
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_error_context_on_invalid_entity() {
+        let policies = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"read",
+                resource == Document::"doc1"
+            );
+        "#;
+
+        let _ = PolicyEngine::new_from_str(policies).unwrap();
+
+        // Create request with malformed principal
+        let result = "Invalid::Entity::Structure".parse::<EntityUid>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_error_context_on_malformed_policy() {
+        let malformed_policy = r#"
+            permit (
+                principal == User::"alice"
+                // Missing comma and rest of policy
+        "#;
+
+        let result = PolicyEngine::new_from_str(malformed_policy);
+        assert!(result.is_err());
+
+        if let Err(PolicyError::ParseError(msg)) = result {
+            assert!(msg.contains("parse") || msg.contains("expected"));
+        } else {
+            panic!("Expected ParseError");
+        }
+    }
+
+    #[test]
+    fn test_empty_policy_text() {
+        let result = PolicyEngine::new_from_str("");
+        assert!(result.is_ok());
+
+        let engine = result.unwrap();
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("read", None),
+            resource: Resource::new("Document", "doc1"),
+        };
+
+        let decision = engine.evaluate(&request).unwrap();
+        assert!(matches!(decision, Decision::Deny { .. }));
+    }
+
+    #[test]
+    fn test_whitespace_only_policy() {
+        let result = PolicyEngine::new_from_str("   \n\t  \n  ");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_label_registry_initialization() {
+        let patterns1 = vec![("label1".to_string(), Regex::new(r"test1").unwrap())];
+        let labeler1 = RegexLabeler::new("Host", "name", "nameLabels", patterns1);
+
+        let label_registry = LabelRegistryBuilder::new()
+            .add_labeler(Arc::new(labeler1))
+            .build();
+
+        let mut resource = Resource::new("Host", "test1-host")
+            .with_attr("name", AttrValue::String("test1-host".into()));
+
+        label_registry.apply(&mut resource);
+
+        if let Some(AttrValue::Set(labels)) = resource.attrs().get("nameLabels") {
+            assert_eq!(labels.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_apply_labels_with_no_labelers() {
+        // Test that an empty registry doesn't panic
+        let label_registry = LabelRegistryBuilder::new().build();
+
+        let mut resource = Resource::new("Host", "test-host")
+            .with_attr("name", AttrValue::String("test-host".into()));
+
+        // Should not panic with no labelers
+        label_registry.apply(&mut resource);
+
+        // Verify no labels were added
+        assert!(resource.attrs().get("nameLabels").is_none());
+    }
+
+    #[test]
+    fn test_label_registry_replacement() {
+        let patterns1 = vec![("old_label".to_string(), Regex::new(r"old").unwrap())];
+        let labeler1 = RegexLabeler::new("Host", "name", "nameLabels", patterns1);
+
+        let label_registry = LabelRegistryBuilder::new()
+            .add_labeler(Arc::new(labeler1))
+            .build();
+
+        let patterns2 = vec![("new_label".to_string(), Regex::new(r"new").unwrap())];
+        let labeler2 = RegexLabeler::new("Host", "name", "nameLabels", patterns2);
+
+        // Replace labelers via reload
+        label_registry.reload(vec![Arc::new(labeler2)]);
+
+        let mut resource = Resource::new("Host", "new-host")
+            .with_attr("name", AttrValue::String("new-host".into()));
+
+        label_registry.apply(&mut resource);
+
+        if let Some(AttrValue::Set(labels)) = resource.attrs().get("nameLabels") {
+            // Should have new_label, not old_label
+            let has_new = labels.iter().any(|l| {
+                if let AttrValue::String(s) = l {
+                    s == "new_label"
+                } else {
+                    false
+                }
+            });
+            assert!(has_new);
+        }
+    }
+
+    #[test]
+    fn test_large_policy_set() {
+        // Generate 100 policies
+        let mut policies = String::new();
+        for i in 0..100 {
+            policies.push_str(&format!(
+                r#"
+                permit (
+                    principal == User::"user{}",
+                    action == Action::"read",
+                    resource == Document::"doc{}"
+                );
+                "#,
+                i, i
+            ));
+        }
+
+        let engine = PolicyEngine::new_from_str(&policies).unwrap();
+
+        // Test evaluation still works
+        let request = Request {
+            principal: Principal::User(User::new("user50", None, None)),
+            action: Action::new("read", None),
+            resource: Resource::new("Document", "doc50"),
+        };
+
+        let decision = engine.evaluate(&request).unwrap();
+        assert!(matches!(decision, Decision::Allow { .. }));
+    }
+
+    #[test]
+    fn test_deeply_nested_namespaces() {
+        let policies = r#"
+            permit (
+                principal == A::B::C::D::E::User::"alice",
+                action == A::B::C::D::E::Action::"read",
+                resource == A::B::C::D::E::Document::"doc1"
+            );
+        "#;
+
+        let engine = PolicyEngine::new_from_str(policies).unwrap();
+
+        let request = Request {
+            principal: Principal::User(User::new(
+                "alice",
+                None,
+                Some(vec![
+                    "A".into(),
+                    "B".into(),
+                    "C".into(),
+                    "D".into(),
+                    "E".into(),
+                ]),
+            )),
+            action: Action::new(
+                "read",
+                Some(vec![
+                    "A".into(),
+                    "B".into(),
+                    "C".into(),
+                    "D".into(),
+                    "E".into(),
+                ]),
+            ),
+            resource: Resource::new("A::B::C::D::E::Document", "doc1"),
+        };
+
+        let decision = engine.evaluate(&request).unwrap();
+        assert!(matches!(decision, Decision::Allow { .. }));
+    }
+
+    #[test]
+    fn test_resource_with_many_attributes() {
+        let policies = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"read",
+                resource is Document
+            );
+        "#;
+
+        let engine = PolicyEngine::new_from_str(policies).unwrap();
+
+        // Create resource with 50 attributes
+        let mut resource = Resource::new("Document", "doc1");
+        for i in 0..50 {
+            resource = resource.with_attr(
+                format!("attr{}", i),
+                AttrValue::String(format!("value{}", i)),
+            );
+        }
+
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("read", None),
+            resource,
+        };
+
+        let decision = engine.evaluate(&request).unwrap();
+        assert!(matches!(decision, Decision::Allow { .. }));
+    }
+
+    #[test]
+    fn test_user_with_many_groups() {
+        let policies = r#"
+            permit (
+                principal in Group::"group25",
+                action == Action::"read",
+                resource == Document::"doc1"
+            );
+        "#;
+
+        let engine = PolicyEngine::new_from_str(policies).unwrap();
+
+        // Create user in 50 groups
+        let groups: Vec<String> = (0..50).map(|i| format!("group{}", i)).collect();
+
+        let request = Request {
+            principal: Principal::User(User::new("alice", Some(groups), None)),
+            action: Action::new("read", None),
+            resource: Resource::new("Document", "doc1"),
+        };
+
+        let decision = engine.evaluate(&request).unwrap();
+        assert!(matches!(decision, Decision::Allow { .. }));
+    }
+
+    #[test]
+    fn test_policy_version_changes_on_reload() {
+        let policy1 = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"read",
+                resource == Document::"doc1"
+            );
+        "#;
+
+        let policy2 = r#"
+            permit (
+                principal == User::"bob",
+                action == Action::"write",
+                resource == Document::"doc2"
+            );
+        "#;
+
+        let engine = PolicyEngine::new_from_str(policy1).unwrap();
+        let version1 = engine.current_version();
+
+        engine.reload_from_str(policy2).unwrap();
+        let version2 = engine.current_version();
+
+        assert_ne!(version1.hash, version2.hash);
+        assert_ne!(version1.loaded_at, version2.loaded_at);
+    }
+
+    #[test]
+    fn test_decision_includes_correct_version() {
+        let policies = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"read",
+                resource == Document::"doc1"
+            );
+        "#;
+
+        let engine = PolicyEngine::new_from_str(policies).unwrap();
+        let engine_version = engine.current_version();
+
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("read", None),
+            resource: Resource::new("Document", "doc1"),
+        };
+
+        let decision = engine.evaluate(&request).unwrap();
+
+        match decision {
+            Decision::Allow { version, .. } => {
+                assert_eq!(version.hash, engine_version.hash);
+            }
+            Decision::Deny { .. } => panic!("Expected Allow"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_snapshots_share_data() {
+        let policies = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"read",
+                resource == Document::"doc1"
+            );
+        "#;
+
+        let engine1 = PolicyEngine::new_from_str(policies).unwrap();
+        let engine2 = engine1.clone();
+
+        let version1 = engine1.current_version();
+        let version2 = engine2.current_version();
+
+        // Both clones should share the same snapshot
+        assert_eq!(version1.hash, version2.hash);
+        assert_eq!(version1.loaded_at, version2.loaded_at);
+    }
+
+    #[test]
+    fn test_snapshot_immutable_after_reload() {
+        let policy1 = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"read",
+                resource == Document::"doc1"
+            );
+        "#;
+
+        let policy2 = r#"
+            permit (
+                principal == User::"bob",
+                action == Action::"write",
+                resource == Document::"doc2"
+            );
+        "#;
+
+        let engine = PolicyEngine::new_from_str(policy1).unwrap();
+        let snapshot1 = engine.current_snapshot();
+        let version1 = snapshot1.version();
+
+        engine.reload_from_str(policy2).unwrap();
+
+        // Old snapshot should still have old version
+        let still_version1 = snapshot1.version();
+        assert_eq!(version1.hash, still_version1.hash);
+
+        // New snapshot should have new version
+        let snapshot2 = engine.current_snapshot();
+        let version2 = snapshot2.version();
+        assert_ne!(version1.hash, version2.hash);
     }
 }

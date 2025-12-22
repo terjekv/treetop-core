@@ -11,7 +11,7 @@
 //! ```rust
 //! use regex::Regex;
 //! use std::sync::Arc;
-//! use treetop_core::{Action, AttrValue, PolicyEngine, Request, Decision, User, Principal, Resource, RegexLabeler, LABEL_REGISTRY};
+//! use treetop_core::{Action, AttrValue, PolicyEngine, Request, Decision, User, Principal, Resource, RegexLabeler, LabelRegistryBuilder};
 //! use sha2::{Digest, Sha256};
 //!
 //! let policies = r#"
@@ -31,14 +31,17 @@
 //!     ("in_domain".to_string(), Regex::new(r"example\.com$").unwrap()),
 //!     ("webserver".to_string(), Regex::new(r"^web-\d+").unwrap()),
 //! ];
-//! LABEL_REGISTRY.load(vec![Arc::new(RegexLabeler::new(
-//!     "Host",
-//!     "name",
-//!     "nameLabels",
-//!     patterns.into_iter().collect(),
-//! ))]);
+//! let label_registry = LabelRegistryBuilder::new()
+//!     .add_labeler(Arc::new(RegexLabeler::new(
+//!         "Host",
+//!         "name",
+//!         "nameLabels",
+//!         patterns.into_iter().collect(),
+//!     )))
+//!     .build();
 //!
-//! let engine = PolicyEngine::new_from_str(&policies).unwrap();
+//! let engine = PolicyEngine::new_from_str(&policies).unwrap()
+//!     .with_label_registry(label_registry);
 //!
 //! let request = Request {
 //!    principal: Principal::User(User::new("alice", None, None)), // No groups, no namespace
@@ -61,20 +64,46 @@
 //!
 //! ```
 //!
+//! ## Thread-Safe Sharing
 //!
+//! For multithreaded applications, wrap `PolicyEngine` in `Arc` to share it across threads:
 //!
+//! ```rust,no_run
+//! use std::sync::Arc;
+//! use std::thread;
+//! # use treetop_core::{PolicyEngine, Request, Principal, User, Action, Resource, Decision};
+//! # let engine_base = PolicyEngine::new_from_str("permit(principal,action,resource);").unwrap();
+//!
+//! let engine = Arc::new(engine_base);
+//! let engine_clone = Arc::clone(&engine);
+//!
+//! let handle = thread::spawn(move || {
+//!     // Evaluate policies in a background thread
+//!     let request = Request {
+//!         principal: Principal::User(User::new("user", None, None)),
+//!         action: Action::new("read", None),
+//!         resource: Resource::new("Document", "doc1"),
+//!     };
+//!     let _decision = engine_clone.evaluate(&request);
+//! });
+//!
+//! handle.join().unwrap();
+//! ```
 //!
 
 pub use build_info::build_info;
+pub use cedar_types::CedarType;
 pub use engine::PolicyEngine;
 pub use error::PolicyError;
-pub use labels::{LABEL_REGISTRY, Labeler, RegexLabeler};
+pub use labels::{LabelRegistry, LabelRegistryBuilder, Labeler, RegexLabeler};
+pub use loader::compile_policy;
 pub use models::{
     Action, AttrValue, Decision, Group, Groups, PermitPolicy, PolicyVersion, Principal, Request,
     Resource, User, UserPolicies,
 };
 
 mod build_info;
+mod cedar_types;
 mod engine;
 mod error;
 mod labels;

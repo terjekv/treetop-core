@@ -5,34 +5,52 @@ use cedar_policy_core::entities::err::EntitiesError;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Policy evaluation and validation errors.
+///
+/// Variants correspond to Cedar parse/eval errors and library validation
+/// errors. Call sites attach human-friendly context where possible.
+/// For example, `EntityAttrError` wraps attribute access failures.
 #[derive(Debug, Error, Serialize, Deserialize)]
 pub enum PolicyError {
+    /// Failed to acquire lock on policy set.
     #[error("failed to lock policy set for read/write: {0}")]
     LockError(String),
 
+    /// Failed to parse Cedar policy text.
     #[error("failed to parse policy: {0}")]
     ParseError(String),
 
+    /// Error during policy evaluation.
     #[error("evaluation error: {0}")]
     EvalError(String),
 
+    /// Request validation failed (invalid principals, resources, or actions).
     #[error("request validation error: {0}")]
     RequestValidationError(String),
 
-    #[error("Context creation error: {0}")]
+    /// Context creation error during request processing.
+    #[error("context creation error: {0}")]
     ContextError(String),
 
-    #[error("Entity error: {0}")]
+    /// Error creating or manipulating Cedar entities.
+    #[error("entity error: {0}")]
     EntityError(String),
 
-    #[error("Poisoned lock error: {0}")]
+    /// Synchronization error (RwLock or similar poisoned).
+    #[error("poisoned lock error: {0}")]
     PoisonedLockError(String),
 
-    #[error("QualifiedId error: {0}")]
+    /// Error with qualified identifiers (malformed namespace or ID).
+    #[error("qualified ID error: {0}")]
     QualifiedIdError(String),
 
-    #[error("Invalid format: {0}")]
+    /// Invalid format for a Cedar construct (string parsing failure).
+    #[error("invalid format: {0}")]
     InvalidFormat(String),
+
+    /// Entity attribute evaluation or access error.
+    #[error("entity attribute error: {0}")]
+    EntityAttrError(String),
 }
 
 impl From<RequestValidationError> for PolicyError {
@@ -55,7 +73,7 @@ impl From<ContextCreationError> for PolicyError {
 
 impl From<EntityAttrEvaluationError> for PolicyError {
     fn from(err: EntityAttrEvaluationError) -> Self {
-        PolicyError::EvalError(err.to_string())
+        PolicyError::EntityAttrError(err.to_string())
     }
 }
 
