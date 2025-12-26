@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Error handling and context validation tests
   - FromStr implementation tests with edge cases
   - Label registry behavior tests
+  - Metrics and observability tests across types
+
+- Metrics & Observability (feature `observability`):
+  - `MetricsSink` trait to collect `EvaluationStats` and `ReloadStats`
+  - Per-phase timing for labels, entities, groups, authorize
+  - Examples for Prometheus and OpenTelemetry tracing
+  - See [docs/Metrics.md](docs/Metrics.md) for details
 
 ### Changed
 
@@ -34,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved error context with detailed Cedar error information
 - Magic strings replaced with `CedarType` enum throughout codebase
 - `PolicyEngine::Clone` is preserved for backward compatibility; use `Arc<PolicyEngine>` for idiomatic thread sharing
+- CI now builds, tests, and runs clippy with `--all-features`, and rejects unreferenced snapshots
 
 ### Migration Guide
 

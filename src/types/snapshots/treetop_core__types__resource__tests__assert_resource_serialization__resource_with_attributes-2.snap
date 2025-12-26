@@ -1,5 +1,5 @@
 ---
-source: src/models.rs
+source: src/types/resource.rs
 expression: resource.cedar_id()
 ---
 test_resource::"test_id"

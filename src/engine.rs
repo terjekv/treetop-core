@@ -8,13 +8,17 @@ use std::time::SystemTime;
 use std::vec;
 
 use crate::labels::LabelRegistry;
-use crate::models::{Decision, PermitPolicy, PolicyVersion, UserPolicies};
 use crate::traits::CedarAtom;
+use crate::types::{
+    Decision, FromDecisionWithPolicy, PermitPolicy, PolicyVersion, Request, UserPolicies,
+};
 use crate::{Groups, Principal};
-use crate::{error::PolicyError, loader, models::FromDecisionWithPolicy, models::Request};
+use crate::{error::PolicyError, loader};
 use arc_swap::ArcSwap;
 
 use sha2::{Digest, Sha256};
+#[cfg(feature = "observability")]
+use tracing::info_span;
 use tracing::{debug, info, warn};
 
 /// Immutable snapshot of a compiled policy set, along with metadata.
@@ -112,6 +116,9 @@ impl PolicyEngine {
     pub fn reload_from_str(&self, policy_text: &str) -> Result<(), PolicyError> {
         let new_snapshot: Snapshot = Arc::new(PolicySnapshot::from_policy_text(policy_text)?);
         self.inner.store(Arc::new(new_snapshot));
+        // Track reloads for metrics (no-op if feature disabled or no sink configured)
+        #[cfg(feature = "observability")]
+        crate::metrics::record_reload();
         Ok(())
     }
 
@@ -183,6 +190,17 @@ impl PolicyEngine {
     /// This method is thread-safe and lock-free. Multiple threads can evaluate requests
     /// concurrently without blocking each other.
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
+        // Top-level span for OpenTelemetry integration (only when observability feature enabled)
+        #[cfg(feature = "observability")]
+        let span = info_span!(
+            "policy_evaluation",
+            principal = %request.principal,
+            action = %request.action,
+            resource = %request.resource,
+        );
+        #[cfg(feature = "observability")]
+        let _guard = span.enter();
+
         let schema: Option<&cedar_policy::Schema> = None;
 
         let groups = match &request.principal {
@@ -207,13 +225,28 @@ impl PolicyEngine {
         let mut resource_dyn = request.resource.clone();
 
         // Apply labels if a registry is configured
-        if let Some(registry) = &self.label_registry {
-            registry.apply(&mut resource_dyn);
+        let labels_start = std::time::Instant::now();
+        {
+            #[cfg(feature = "observability")]
+            let _label_span = info_span!("apply_labels").entered();
+            if let Some(registry) = &self.label_registry {
+                registry.apply(&mut resource_dyn);
+            }
         }
+        let labels_duration = labels_start.elapsed();
+        debug!(
+            event = "Request",
+            phase = "LabelsApplied",
+            time = labels_duration.as_micros(),
+            resource_attrs = ?resource_dyn.attrs()
+        );
 
         // Build resource entity from the (now augmented) attrs
 
+        let entities_start = std::time::Instant::now();
         // 1. Turn your Atom types into EntityUids (the “P, A, R” in PARC)
+        #[cfg(feature = "observability")]
+        let _entity_span = info_span!("construct_entities").entered();
         let principal: EntityUid = request.principal.cedar_entity_uid()?;
         let action: EntityUid = request.action.cedar_entity_uid()?;
         let resource: EntityUid = resource_dyn.cedar_entity_uid()?;
@@ -236,10 +269,15 @@ impl PolicyEngine {
         let resource_entity =
             cedar_policy::Entity::new(resource.clone(), resource_attrs, Default::default())?;
 
+        let entities_duration = entities_start.elapsed();
+
         // 3. Create the Cedar request
         let cedar_req = CedarRequest::new(principal.clone(), action, resource, context, None)?;
 
         // 4. Create Entities for the request
+        #[cfg(feature = "observability")]
+        let _groups_span = info_span!("resolve_groups").entered();
+        let groups_start = std::time::Instant::now();
         // 4a. Create EntityUids for each group
         let mut group_uids = HashSet::new();
         for group in groups.clone() {
@@ -264,6 +302,7 @@ impl PolicyEngine {
                 schema,
             )?
             .add_entities(group_entities, schema)?;
+        let groups_duration = groups_start.elapsed();
 
         debug!(
             event = "Request",
@@ -277,7 +316,20 @@ impl PolicyEngine {
         );
 
         // 6. Run the authorizer against the current immutable snapshot
+        #[cfg(feature = "observability")]
+        let _authz_span = info_span!("authorize").entered();
+        let authz_start = std::time::Instant::now();
         let result = Authorizer::new().is_authorized(&cedar_req, &snapshot.set, &entities);
+        #[cfg(feature = "observability")]
+        drop(_authz_span);
+        let authz_duration = authz_start.elapsed();
+
+        debug!(
+            event = "Request",
+            phase = "Authorized",
+            time = authz_duration.as_micros(),
+            decision = ?result.decision(),
+        );
 
         debug!(
             event = "Request",
@@ -310,6 +362,31 @@ impl PolicyEngine {
                     );
                 }
             }
+        }
+
+        // Record metrics (no-op when no sink is configured, or when feature is disabled)
+        #[cfg(feature = "observability")]
+        {
+            let dur = now.elapsed();
+            let allowed = result.decision() == cedar_policy::Decision::Allow;
+            let principal_id = request.principal.to_string();
+            let action_id = request.action.to_string();
+            crate::metrics::record_evaluation(
+                allowed,
+                dur,
+                principal_id.clone(),
+                action_id.clone(),
+            );
+
+            // Also record detailed phase timings
+            let phases = crate::metrics::EvaluationPhases {
+                apply_labels_ms: labels_duration.as_secs_f64() * 1000.0,
+                construct_entities_ms: entities_duration.as_secs_f64() * 1000.0,
+                resolve_groups_ms: groups_duration.as_secs_f64() * 1000.0,
+                authorize_ms: authz_duration.as_secs_f64() * 1000.0,
+                total_ms: dur.as_secs_f64() * 1000.0,
+            };
+            crate::metrics::record_evaluation_phases(allowed, dur, principal_id, action_id, phases);
         }
 
         Ok(Decision::from_decision_with_policy(
@@ -366,9 +443,9 @@ mod tests {
 
     use super::*;
     use crate::labels::{LabelRegistryBuilder, RegexLabeler};
-    use crate::models::AttrValue;
-    use crate::models::{Decision::Allow, Decision::Deny, Group, Resource};
     use crate::snapshot_decision;
+    use crate::types::AttrValue;
+    use crate::types::{Decision::Allow, Decision::Deny, Group, Resource};
     use crate::{Action, User};
     use regex::Regex;
     use yare::parameterized;

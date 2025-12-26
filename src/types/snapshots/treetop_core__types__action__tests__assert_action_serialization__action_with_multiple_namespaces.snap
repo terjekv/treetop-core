@@ -1,10 +1,11 @@
 ---
-source: src/models.rs
+source: src/types/action.rs
 expression: serialized
 ---
 {
   "id": "test_action",
   "namespace": [
-    "namespace1"
+    "namespace1",
+    "namespace2"
   ]
 }
