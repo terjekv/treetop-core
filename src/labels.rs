@@ -2,7 +2,7 @@ use arc_swap::ArcSwap;
 use regex::Regex;
 use std::sync::Arc;
 
-use crate::models::{AttrValue, Resource};
+use crate::types::{AttrValue, Resource};
 
 /// Trait for objects that can label resources based on their attributes.
 ///

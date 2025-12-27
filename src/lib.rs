@@ -92,22 +92,27 @@
 //!
 
 pub use build_info::build_info;
-pub use cedar_types::CedarType;
 pub use engine::PolicyEngine;
 pub use error::PolicyError;
 pub use labels::{LabelRegistry, LabelRegistryBuilder, Labeler, RegexLabeler};
 pub use loader::compile_policy;
-pub use models::{
-    Action, AttrValue, Decision, Group, Groups, PermitPolicy, PolicyVersion, Principal, Request,
-    Resource, User, UserPolicies,
+pub use types::{
+    Action, AttrValue, CedarType, Decision, Group, Groups, PermitPolicy, PolicyVersion, Principal,
+    Request, Resource, User, UserPolicies,
 };
 
+#[cfg(feature = "observability")]
+pub use metrics::{EvaluationPhases, EvaluationStats, MetricsSink, ReloadStats, set_sink};
+
 mod build_info;
-mod cedar_types;
 mod engine;
 mod error;
 mod labels;
 mod loader;
-mod models;
+#[cfg(feature = "observability")]
+pub mod metrics;
+#[cfg(not(feature = "observability"))]
+mod metrics;
 mod tests;
 mod traits;
+pub mod types;

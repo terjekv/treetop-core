@@ -18,6 +18,39 @@ permit (
 };
 ```
 
+## Observability & Metrics
+
+Treetop includes optional metrics and tracing to help you observe policy evaluation:
+
+- **Feature flag:** Enable `observability` to collect metrics and emit tracing spans.
+- **Metrics sink:** Implement `MetricsSink` to capture `EvaluationStats` and `ReloadStats`.
+- **Phase timing:** Per-phase durations for labels, entities, groups, and authorize.
+- **Prometheus example:** See [examples/prometheus_sink.rs](examples/prometheus_sink.rs).
+- **OpenTelemetry example:** See [examples/opentelemetry_tracing.rs](examples/opentelemetry_tracing.rs).
+- **Documentation:** See [docs/Metrics.md](docs/Metrics.md).
+
+Enable in your crate:
+
+```toml
+[dependencies]
+treetop-core = { version = "0", features = ["observability"] }
+```
+
+Register a sink:
+
+```rust
+use std::sync::Arc;
+use treetop_core::metrics::{set_sink, EvaluationStats, ReloadStats, MetricsSink};
+
+struct MySink;
+impl MetricsSink for MySink {
+    fn on_evaluation(&self, stats: &EvaluationStats) { println!("{:?}", stats); }
+    fn on_reload(&self, stats: &ReloadStats) { println!("{:?}", stats); }
+}
+
+set_sink(Arc::new(MySink));
+```
+
 A different users have different permissions when it comes to creating hosts. Alice can create hosts within the domain `example_domain`,
 irrespective of the IP range, and with any name. Bob on the other hand can only create hosts with a acceptable names for web servers and
 within a specific IP range, and within the same domain.

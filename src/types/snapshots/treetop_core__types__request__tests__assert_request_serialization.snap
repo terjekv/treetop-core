@@ -1,0 +1,21 @@
+---
+source: src/types/request.rs
+expression: serialized
+---
+{
+  "action": {
+    "id": "create",
+    "namespace": []
+  },
+  "principal": {
+    "User": {
+      "groups": [],
+      "id": "alice",
+      "namespace": []
+    }
+  },
+  "resource": {
+    "id": "web-01",
+    "kind": "Host"
+  }
+}

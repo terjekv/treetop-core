@@ -6,7 +6,7 @@ mod tests {
 
     use crate::{
         Action, Decision, Principal, Request, Resource, User, engine::PolicyEngine,
-        models::AttrValue, snapshot_decision,
+        types::AttrValue, snapshot_decision,
     };
 
     const DNS_POLICY: &str = include_str!("../../testdata/dns.cedar");
@@ -82,7 +82,7 @@ mod tests {
 
         let request = Request {
             principal: Principal::User(user),
-            action: action.into(),
+            action,
             resource: Resource::new("Host", "hostname.example.com")
                 .with_attr("name", AttrValue::String("hostname.example.com".into()))
                 .with_attr("ip", AttrValue::Ip("192.0.2.1".into())),
@@ -102,7 +102,7 @@ mod tests {
         let action = get_action("view_host");
         let request = Request {
             principal: Principal::User(user),
-            action: action.into(),
+            action,
             resource: Resource::new("Host", "hostname.example.com")
                 .with_attr("name", AttrValue::String("hostname.example.com".into()))
                 .with_attr("ip", AttrValue::Ip("192.0.2.1".into())),

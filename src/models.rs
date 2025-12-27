@@ -70,7 +70,7 @@ impl CedarAtom for Principal {
         }
     }
     fn cedar_type() -> &'static str {
-        CedarType::Principal.as_str()
+        CedarType::Principal.as_ref()
     }
     fn cedar_id(&self) -> String {
         match self {
@@ -249,7 +249,7 @@ impl Resource {
 
 impl CedarAtom for Resource {
     fn cedar_type() -> &'static str {
-        CedarType::Resource.as_str()
+        CedarType::Resource.as_ref()
     }
 
     fn cedar_id(&self) -> String {
@@ -403,7 +403,7 @@ impl User {
 
 impl CedarAtom for User {
     fn cedar_type() -> &'static str {
-        CedarType::User.as_str()
+        CedarType::User.as_ref()
     }
 
     fn cedar_id(&self) -> String {
@@ -479,7 +479,7 @@ impl Action {
 
 impl CedarAtom for Action {
     fn cedar_type() -> &'static str {
-        CedarType::Action.as_str()
+        CedarType::Action.as_ref()
     }
 
     fn cedar_id(&self) -> String {
@@ -541,7 +541,7 @@ impl Display for Group {
 
 impl CedarAtom for Group {
     fn cedar_type() -> &'static str {
-        CedarType::Group.as_str()
+        CedarType::Group.as_ref()
     }
 
     fn cedar_id(&self) -> String {
@@ -735,14 +735,13 @@ mod tests {
     use super::*;
 
     fn quote_last_element(s: &str) -> String {
-        let target = if s.contains("::") {
+        if s.contains("::") {
             let parts: Vec<&str> = s.split("::").collect();
             let last_part = parts.last().unwrap().trim_matches('"');
             format!("{}::\"{}\"", parts[..parts.len() - 1].join("::"), last_part)
         } else {
             s.to_string()
-        };
-        target
+        }
     }
 
     #[parameterized(
@@ -775,6 +774,7 @@ mod tests {
         alice_with_multiple_namespaces = { "Infra::Core::User::alice", "alice", None, Some(vec!["Infra".to_string(), "Core".to_string()]) },
         alice_with_groups_and_namespace = { "Infra::User::alice[admins,users]", "alice", Some(vec!["admins".to_string(), "users".to_string()]), Some(vec!["Infra".to_string()]) },
     )]
+    #[allow(clippy::unnecessary_literal_unwrap)]
     fn test_user_from_str(
         user_str: &str,
         expected_id: &str,
@@ -803,7 +803,7 @@ mod tests {
         );
         assert_eq!(
             user.id.namespace(),
-            expected_namespace.as_deref().unwrap_or(&vec![])
+            expected_namespace.as_deref().unwrap_or(&[])
         );
     }
 
@@ -845,7 +845,7 @@ mod tests {
         );
         assert_eq!(
             group.id.namespace(),
-            expected_namespace.as_deref().unwrap_or(&vec![])
+            expected_namespace.as_deref().unwrap_or(&[])
         );
     }
 
