@@ -39,15 +39,16 @@ treetop-core = { version = "0", features = ["observability"] }
 Register a sink:
 
 ```rust
+use std::sync::Arc;
 use treetop_core::metrics::{set_sink, EvaluationStats, ReloadStats, MetricsSink};
 
 struct MySink;
 impl MetricsSink for MySink {
-    fn record_evaluation(&self, stats: &EvaluationStats) { println!("{:?}", stats); }
-    fn record_reload(&self, stats: &ReloadStats) { println!("{:?}", stats); }
+    fn on_evaluation(&self, stats: &EvaluationStats) { println!("{:?}", stats); }
+    fn on_reload(&self, stats: &ReloadStats) { println!("{:?}", stats); }
 }
 
-set_sink(Some(Box::new(MySink)));
+set_sink(Arc::new(MySink));
 ```
 
 A different users have different permissions when it comes to creating hosts. Alice can create hosts within the domain `example_domain`,
