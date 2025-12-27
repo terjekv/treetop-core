@@ -64,35 +64,112 @@
 //!
 //! ```
 //!
-//! ## Thread-Safe Sharing
+//! ## Batch Evaluation with Snapshots
 //!
-//! For multithreaded applications, wrap `PolicyEngine` in `Arc` to share it across threads:
+//! For consistent batch evaluation where you need to guarantee that all requests use the same
+//! policy and label state, use `snapshot()` to freeze the engine state, then evaluate multiple
+//! requests against that snapshot:
 //!
-//! ```rust,no_run
+//! ```rust
 //! use std::sync::Arc;
 //! use std::thread;
-//! # use treetop_core::{PolicyEngine, Request, Principal, User, Action, Resource, Decision};
-//! # let engine_base = PolicyEngine::new_from_str("permit(principal,action,resource);").unwrap();
+//! use treetop_core::{PolicyEngine, Request, Principal, User, Action, Resource, Decision};
 //!
-//! let engine = Arc::new(engine_base);
-//! let engine_clone = Arc::clone(&engine);
+//! let policies = r#"
+//! permit (
+//!    principal == User::"alice",
+//!    action == Action::"read",
+//!    resource == Document::"doc1"
+//! );
+//! permit (
+//!    principal == User::"bob",
+//!    action == Action::"read",
+//!    resource == Document::"doc2"
+//! );
+//! "#;
 //!
-//! let handle = thread::spawn(move || {
-//!     // Evaluate policies in a background thread
-//!     let request = Request {
-//!         principal: Principal::User(User::new("user", None, None)),
+//! let engine = PolicyEngine::new_from_str(policies).unwrap();
+//!
+//! // Create a snapshot - freezes both policies and labels
+//! let snapshot = engine.snapshot();
+//!
+//! // Evaluate multiple requests against the same snapshot
+//! let requests = vec![
+//!     Request {
+//!         principal: Principal::User(User::new("alice", None, None)),
 //!         action: Action::new("read", None),
 //!         resource: Resource::new("Document", "doc1"),
-//!     };
-//!     let _decision = engine_clone.evaluate(&request);
-//! });
+//!     },
+//!     Request {
+//!         principal: Principal::User(User::new("bob", None, None)),
+//!         action: Action::new("read", None),
+//!         resource: Resource::new("Document", "doc2"),
+//!     },
+//! ];
 //!
-//! handle.join().unwrap();
+//! for request in requests {
+//!     let decision = snapshot.evaluate(&request).unwrap();
+//!     assert!(matches!(decision, Decision::Allow { .. }));
+//! }
+//!
+//! // Access snapshot metadata
+//! let version = snapshot.version();
+//! let policy_count = snapshot.policy_set().policies().count();
+//! assert_eq!(policy_count, 2);
+//! ```
+//!
+//! ## Thread-Safe Batch Evaluation with Snapshots
+//!
+//! For multithreaded applications that need consistent batch evaluation, create a snapshot and
+//! share it across threads using `Arc`. Each thread evaluates requests against the same frozen state:
+//!
+//! ```rust
+//! use std::sync::Arc;
+//! use std::thread;
+//! use treetop_core::{PolicyEngine, Request, Principal, User, Action, Resource, Decision};
+//!
+//! let policies = r#"
+//! permit (
+//!    principal == User::"alice",
+//!    action in [Action::"read", Action::"write"],
+//!    resource == Document::"doc1"
+//! );
+//! "#;
+//!
+//! let engine = PolicyEngine::new_from_str(policies).unwrap();
+//!
+//! // Create a snapshot and wrap in Arc for sharing across threads
+//! let snapshot = Arc::new(engine.snapshot());
+//!
+//! let mut handles = vec![];
+//!
+//! // Spawn multiple threads, each evaluating requests against the same snapshot
+//! for thread_id in 0..3 {
+//!     let snapshot_clone = Arc::clone(&snapshot);
+//!
+//!     let handle = thread::spawn(move || {
+//!         let request = Request {
+//!             principal: Principal::User(User::new("alice", None, None)),
+//!             action: Action::new(if thread_id == 0 { "read" } else { "write" }, None),
+//!             resource: Resource::new("Document", "doc1"),
+//!         };
+//!
+//!         // All threads evaluate against the exact same snapshot state
+//!         let decision = snapshot_clone.evaluate(&request).unwrap();
+//!         assert!(matches!(decision, Decision::Allow { .. }));
+//!     });
+//!
+//!     handles.push(handle);
+//! }
+//!
+//! for handle in handles {
+//!     handle.join().unwrap();
+//! }
 //! ```
 //!
 
 pub use build_info::build_info;
-pub use engine::PolicyEngine;
+pub use engine::{EngineSnapshot, PolicyEngine};
 pub use error::PolicyError;
 pub use labels::{LabelRegistry, LabelRegistryBuilder, Labeler, RegexLabeler};
 pub use loader::compile_policy;

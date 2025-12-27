@@ -61,6 +61,22 @@ impl PolicySnapshot {
         self.version.clone()
     }
 }
+
+/// Immutable snapshot of engine state: policies and label registry frozen together.
+///
+/// This guarantees consistent evaluation semantics across a batch of requests.
+/// All requests evaluated against the same `EngineSnapshot` see the exact same
+/// policy version and labeling rules.
+///
+/// The snapshot captures the actual labeler list at the moment of creation,
+/// not just a pointer to the registry. This ensures true immutability even if
+/// the engine's label registry is later modified via `reload()`.
+#[derive(Clone)]
+pub struct EngineSnapshot {
+    snapshot: Snapshot,
+    labelers: Option<Arc<Vec<Arc<dyn crate::labels::Labeler>>>>,
+}
+
 /// The main engine handle. Thread-safe and cheaply cloneable.
 ///
 /// Cloning is cheap (just increments Arc refcounts), but for multithreaded
@@ -109,6 +125,29 @@ impl PolicyEngine {
     /// Set or replace the label registry for this engine.
     ///
     /// This allows updating the labelers after the engine has been created.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method requires `&mut self` and is **not thread-safe** for concurrent updates.
+    /// It's intended for single-threaded setup/configuration before sharing the engine.
+    ///
+    /// For runtime label updates in a multithreaded context, use
+    /// [`LabelRegistry::reload()`](crate::labels::LabelRegistry::reload) on the
+    /// registry itself, which atomically swaps labelers using `Arc` and ensures
+    /// thread-safe updates. Note that `reload()` only affects new snapshots;
+    /// existing snapshots remain frozen with their original labelers.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use treetop_core::{PolicyEngine, LabelRegistryBuilder};
+    ///
+    /// let mut engine = PolicyEngine::new_from_str("permit(principal,action,resource);").unwrap();
+    ///
+    /// // Setup during initialization (single-threaded)
+    /// let registry = LabelRegistryBuilder::new().build();
+    /// engine.set_label_registry(registry);
+    /// ```
     pub fn set_label_registry(&mut self, registry: LabelRegistry) {
         self.label_registry = Some(Arc::new(registry));
     }
@@ -140,6 +179,43 @@ impl PolicyEngine {
     /// when this snapshot was installed.
     pub fn current_version(&self) -> PolicyVersion {
         self.current_snapshot().version()
+    }
+
+    /// Capture an immutable snapshot of the engine's current state.
+    ///
+    /// The snapshot freezes both policies and label registry, guaranteeing
+    /// consistent evaluation semantics for batch processing.
+    ///
+    /// # Immutability Guarantee
+    ///
+    /// The snapshot captures the actual labeler list at the moment of creation,
+    /// not just a reference to the mutable `LabelRegistry`. This means:
+    ///
+    /// - If you call [`LabelRegistry::reload()`](crate::labels::LabelRegistry::reload)
+    ///   after creating a snapshot, the snapshot continues using its original labelers
+    /// - Multiple snapshots can coexist with different labeler sets
+    /// - Snapshots are truly immutable and safe to share across threads
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # use treetop_core::{PolicyEngine, Request};
+    /// # let engine = PolicyEngine::new_from_str("permit(principal,action,resource);").unwrap();
+    /// # let requests: Vec<Request> = vec![];
+    /// let snapshot = engine.snapshot();
+    /// let results: Vec<_> = requests
+    ///     .iter()
+    ///     .map(|req| snapshot.evaluate(req))
+    ///     .collect();
+    /// // All evaluations used the same policy version and labels
+    /// ```
+    pub fn snapshot(&self) -> EngineSnapshot {
+        EngineSnapshot {
+            snapshot: self.current_snapshot(),
+            labelers: self
+                .label_registry
+                .as_ref()
+                .map(|reg| reg.snapshot_labelers()),
+        }
     }
 
     /// Evaluate a policy request against the currently loaded policy set.
@@ -195,6 +271,56 @@ impl PolicyEngine {
     /// This method is thread-safe and lock-free. Multiple threads can evaluate requests
     /// concurrently without blocking each other.
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
+        self.snapshot().evaluate(request)
+    }
+
+    /// List all policies that may apply to a given user (optionally namespaced).
+    ///
+    /// This is useful for diagnostics and tooling that want to show or export
+    /// effective policies for a principal. It matches `principal == User::..`
+    /// and `principal == Any` constraints.
+    pub fn list_policies_for_user(
+        &self,
+        user: &str,
+        namespace: Vec<String>,
+    ) -> Result<UserPolicies, PolicyError> {
+        let snapshot = self.current_snapshot();
+        let policies = snapshot.set.policies();
+
+        // Join the user and then namespace into a ::-separated string
+        let user_with_namespace = if namespace.is_empty() {
+            format!("User::\"{user}\"")
+        } else {
+            format!("User::\"{}\"::{}", namespace.join("::"), user)
+        };
+
+        let uid: EntityUid = user_with_namespace.parse()?;
+
+        let mut matching_policies: Vec<Policy> = Vec::new();
+
+        for policy in policies {
+            // Check if the policy applies to the user
+            let pc = policy.principal_constraint();
+            if pc == PrincipalConstraint::Eq(uid.clone()) || pc == PrincipalConstraint::Any {
+                matching_policies.push(policy.clone());
+            }
+        }
+
+        Ok(UserPolicies::new(user, &matching_policies))
+    }
+
+    pub fn policies(&self) -> Result<Vec<Policy>, PolicyError> {
+        let snapshot = self.current_snapshot();
+        Ok(snapshot.policy_set().policies().cloned().collect())
+    }
+}
+
+impl EngineSnapshot {
+    /// Evaluate a request against this immutable snapshot.
+    ///
+    /// Uses the policies and label registry frozen at snapshot creation time,
+    /// guaranteeing consistent results across a batch of evaluations.
+    pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
         // Top-level span for OpenTelemetry integration (only when observability feature enabled)
         #[cfg(feature = "observability")]
         let span = info_span!(
@@ -214,7 +340,7 @@ impl PolicyEngine {
         };
 
         let now = Instant::now();
-        let snapshot = self.current_snapshot();
+        let snapshot = &self.snapshot;
         let version = snapshot.version();
 
         debug!(
@@ -229,13 +355,19 @@ impl PolicyEngine {
         // resource is &request.resource; take a working copy so we can mutate attrs with labels
         let mut resource_dyn = request.resource.clone();
 
-        // Apply labels if a registry is configured
+        // Apply labels from the frozen labeler list
         let labels_start = Instant::now();
         {
             #[cfg(feature = "observability")]
             let _label_span = info_span!("apply_labels").entered();
-            if let Some(registry) = &self.label_registry {
-                registry.apply(&mut resource_dyn);
+
+            if let Some(labelers) = &self.labelers {
+                let kind_owned = resource_dyn.kind().to_owned();
+                for labeler in labelers.iter() {
+                    if labeler.applies_to(&kind_owned) {
+                        labeler.apply(&mut resource_dyn);
+                    }
+                }
             }
         }
         let labels_duration = labels_start.elapsed();
@@ -248,8 +380,8 @@ impl PolicyEngine {
 
         // Build resource entity from the (now augmented) attrs
 
-        // 1. Turn your Atom types into EntityUids (the “P, A, R” in PARC)
-        let entities_start = std::time::Instant::now();
+        // 1. Turn your Atom types into EntityUids (the "P, A, R" in PARC)
+        let entities_start = Instant::now();
         #[cfg(feature = "observability")]
         let _entity_span = info_span!("construct_entities").entered();
         let principal: EntityUid = request.principal.cedar_entity_uid()?;
@@ -257,8 +389,8 @@ impl PolicyEngine {
         let resource: EntityUid = resource_dyn.cedar_entity_uid()?;
         let resource_attrs = resource_dyn.cedar_attr()?;
 
-        // 2. Build an Context from the resource, this may be empty.
-        let context = request.resource.cedar_ctx()?;
+        // 2. Build a Context from the labeled resource (in case context depends on derived attrs)
+        let context = resource_dyn.cedar_ctx()?;
 
         debug!(
             event = "Request",
@@ -270,9 +402,6 @@ impl PolicyEngine {
             groups = groups.to_string(),
             attrs = ?resource_attrs
         );
-
-        let resource_entity =
-            cedar_policy::Entity::new(resource.clone(), resource_attrs, Default::default())?;
 
         #[cfg(feature = "observability")]
         drop(_entity_span);
@@ -311,14 +440,7 @@ impl PolicyEngine {
 
         // 5. Create the complete Entities collection, including the resource, principal, and groups
         let entities = Entities::empty()
-            .add_entities(
-                vec![
-                    resource_dyn.cedar_entity()?,
-                    principal_entity,
-                    resource_entity,
-                ],
-                schema,
-            )?
+            .add_entities(vec![resource_dyn.cedar_entity()?, principal_entity], schema)?
             .add_entities(group_entities, schema)?;
 
         debug!(
@@ -336,7 +458,7 @@ impl PolicyEngine {
         // 6. Run the authorizer against the current immutable snapshot
         #[cfg(feature = "observability")]
         let _authz_span = info_span!("authorize").entered();
-        let authz_start = std::time::Instant::now();
+        let authz_start = Instant::now();
         let result = Authorizer::new().is_authorized(&cedar_req, &snapshot.set, &entities);
         #[cfg(feature = "observability")]
         drop(_authz_span);
@@ -426,10 +548,8 @@ impl PolicyEngine {
         user: &str,
         namespace: Vec<String>,
     ) -> Result<UserPolicies, PolicyError> {
-        let snapshot = self.current_snapshot();
-        let policies = snapshot.set.policies();
+        let policies = self.snapshot.set.policies();
 
-        // Join the user and then namespace into a ::-separated string
         let user_with_namespace = if namespace.is_empty() {
             format!("User::\"{user}\"")
         } else {
@@ -441,7 +561,6 @@ impl PolicyEngine {
         let mut matching_policies: Vec<Policy> = Vec::new();
 
         for policy in policies {
-            // Check if the policy applies to the user
             let pc = policy.principal_constraint();
             if pc == PrincipalConstraint::Eq(uid.clone()) || pc == PrincipalConstraint::Any {
                 matching_policies.push(policy.clone());
@@ -452,8 +571,17 @@ impl PolicyEngine {
     }
 
     pub fn policies(&self) -> Result<Vec<Policy>, PolicyError> {
-        let snapshot = self.current_snapshot();
-        Ok(snapshot.policy_set().policies().cloned().collect())
+        Ok(self.snapshot.policy_set().policies().cloned().collect())
+    }
+
+    /// Policy version for this snapshot.
+    pub fn version(&self) -> PolicyVersion {
+        self.snapshot.version()
+    }
+
+    /// Access the policy set for inspection or diagnostics.
+    pub fn policy_set(&self) -> &PolicySet {
+        self.snapshot.policy_set()
     }
 }
 
@@ -1238,6 +1366,135 @@ permit (
             });
             assert!(has_new);
         }
+    }
+
+    #[test]
+    fn test_snapshot_without_labels_remains_independent() {
+        // Policy that uses labels
+        let policies = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"read",
+                resource is Host
+            ) when {
+                resource.tags.contains("allowed")
+            };
+        "#;
+
+        // Engine starts without any label registry
+        let engine = PolicyEngine::new_from_str(policies).unwrap();
+        let snapshot1 = engine.snapshot();
+
+        // Add a label registry to the engine
+        let patterns = vec![("allowed".to_string(), Regex::new(r".*").unwrap())];
+        let labeler = RegexLabeler::new("Host", "name", "tags", patterns);
+        let label_registry = LabelRegistryBuilder::new()
+            .add_labeler(Arc::new(labeler))
+            .build();
+        let engine = engine.with_label_registry(label_registry);
+
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("read", None),
+            resource: Resource::new("Host", "any-host")
+                .with_attr("name", AttrValue::String("any-host".into())),
+        };
+
+        // Snapshot without labels should deny
+        let snapshot_decision = snapshot1.evaluate(&request).unwrap();
+        assert!(
+            matches!(snapshot_decision, Decision::Deny { .. }),
+            "Snapshot without labels should deny"
+        );
+
+        // Engine with labels should allow
+        let engine_decision = engine.evaluate(&request).unwrap();
+        assert!(
+            matches!(engine_decision, Decision::Allow { .. }),
+            "Engine with labels should allow"
+        );
+
+        // New snapshot should also allow
+        let snapshot2 = engine.snapshot();
+        let snapshot2_decision = snapshot2.evaluate(&request).unwrap();
+        assert!(
+            matches!(snapshot2_decision, Decision::Allow { .. }),
+            "New snapshot with labels should allow"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_truly_frozen_despite_registry_reload() {
+        // This test verifies that EngineSnapshot captures the actual labeler list,
+        // not just a pointer to the mutable LabelRegistry. When the registry is
+        // reloaded, old snapshots should continue using their original labelers.
+
+        let policies = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"access",
+                resource is Host
+            ) when {
+                resource.tags.contains("v1")
+            };
+        "#;
+
+        // Create initial label registry that tags everything with "v1"
+        let patterns1 = vec![("v1".to_string(), Regex::new(r".*").unwrap())];
+        let labeler1 = RegexLabeler::new("Host", "name", "tags", patterns1);
+        let label_registry = LabelRegistryBuilder::new()
+            .add_labeler(Arc::new(labeler1))
+            .build();
+
+        let engine = PolicyEngine::new_from_str(policies)
+            .unwrap()
+            .with_label_registry(label_registry);
+
+        // Take snapshot with v1 labelers
+        let snapshot1 = engine.snapshot();
+
+        // Reload the label registry with different tags ("v2" instead of "v1")
+        let patterns2 = vec![("v2".to_string(), Regex::new(r".*").unwrap())];
+        let labeler2 = RegexLabeler::new("Host", "name", "tags", patterns2);
+        if let Some(registry) = engine.label_registry() {
+            registry.reload(vec![Arc::new(labeler2)]);
+        }
+
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("access", None),
+            resource: Resource::new("Host", "test-host")
+                .with_attr("name", AttrValue::String("test-host".into())),
+        };
+
+        // Snapshot1 should still use OLD labelers (v1) - should allow
+        let snapshot1_decision = snapshot1.evaluate(&request).unwrap();
+        assert!(
+            matches!(snapshot1_decision, Decision::Allow { .. }),
+            "Snapshot should use frozen v1 labelers, allowing access"
+        );
+
+        // Engine should use NEW labelers (v2) - should deny since policy expects "v1"
+        let engine_decision = engine.evaluate(&request).unwrap();
+        assert!(
+            matches!(engine_decision, Decision::Deny { .. }),
+            "Engine should use reloaded v2 labelers, denying access"
+        );
+
+        // New snapshot should capture current (v2) labelers - should also deny
+        let snapshot2 = engine.snapshot();
+        let snapshot2_decision = snapshot2.evaluate(&request).unwrap();
+        assert!(
+            matches!(snapshot2_decision, Decision::Deny { .. }),
+            "New snapshot should use v2 labelers, denying access"
+        );
+
+        // Verify snapshot1 STILL uses v1 after all this
+        let snapshot1_decision_again = snapshot1.evaluate(&request).unwrap();
+        assert!(
+            matches!(snapshot1_decision_again, Decision::Allow { .. }),
+            "Snapshot1 should remain truly frozen with v1 labelers"
+        );
     }
 
     #[test]

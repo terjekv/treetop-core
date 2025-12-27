@@ -290,7 +290,7 @@ fn main() {
 
         // Mostly small latencies (< 2ms) with a small probability of larger outliers (5–150ms).
         let r = lcg(&mut rng);
-        let dur = if r % 20 == 0 {
+        let dur = if r.is_multiple_of(20) {
             // ~5% of the time: heavier tail between 5ms and ~150ms
             let micros = 5_000 + (r % 30) * 5_000; // 5ms to 155ms
             Duration::from_micros(micros)

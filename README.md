@@ -154,6 +154,96 @@ permit (
  let json = serde_json::to_string(&policies).unwrap();
 ```
 
+## Batch evaluation with snapshots
+
+For consistent batch evaluation where every request must see the same policy version and labeling rules, take a snapshot and evaluate against it. A snapshot freezes both policies and the current labelers.
+
+```rust
+use treetop_core::{PolicyEngine, Request, Principal, User, Action, Resource, Decision};
+
+let policies = r#"
+permit (
+   principal == User::"alice",
+   action == Action::"read",
+   resource == Document::"doc1"
+);
+permit (
+   principal == User::"bob",
+   action == Action::"read",
+   resource == Document::"doc2"
+);
+"#;
+
+let engine = PolicyEngine::new_from_str(policies).unwrap();
+
+// Create a snapshot – freezes policies and labelers
+let snapshot = engine.snapshot();
+
+let batch = vec![
+    Request {
+        principal: Principal::User(User::new("alice", None, None)),
+        action: Action::new("read", None),
+        resource: Resource::new("Document", "doc1"),
+    },
+    Request {
+        principal: Principal::User(User::new("bob", None, None)),
+        action: Action::new("read", None),
+        resource: Resource::new("Document", "doc2"),
+    },
+];
+
+for req in batch {
+    let decision = snapshot.evaluate(&req).unwrap();
+    assert!(matches!(decision, Decision::Allow { .. }));
+}
+
+// Inspect snapshot metadata
+let _version = snapshot.version();
+let _policy_count = snapshot.policy_set().policies().count();
+```
+
+## Thread-safe batch evaluation with snapshots
+
+Snapshots are cheap to clone and safe to share across threads using `Arc`. Each thread evaluates against the exact same frozen state:
+
+```rust
+use std::sync::Arc;
+use std::thread;
+use treetop_core::{PolicyEngine, Request, Principal, User, Action, Resource, Decision};
+
+let policies = r#"
+permit (
+   principal == User::"alice",
+   action in [Action::"read", Action::"write"],
+   resource == Document::"doc1"
+);
+"#;
+
+let engine = PolicyEngine::new_from_str(policies).unwrap();
+let snapshot = Arc::new(engine.snapshot());
+
+let mut handles = vec![];
+for i in 0..3 {
+    let snap = Arc::clone(&snapshot);
+    handles.push(thread::spawn(move || {
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new(if i == 0 { "read" } else { "write" }, None),
+            resource: Resource::new("Document", "doc1"),
+        };
+        let decision = snap.evaluate(&request).unwrap();
+        assert!(matches!(decision, Decision::Allow { .. }));
+    }));
+}
+for h in handles { h.join().unwrap(); }
+```
+
+## Labels and immutability
+
+- `EngineSnapshot` freezes the actual labeler list at the moment of snapshot, so later updates do not affect existing snapshots.
+- To update labels at runtime, call `LabelRegistry::reload(new_labelers)`; new snapshots and evaluations will see the new labelers, existing snapshots remain unchanged.
+- `PolicyEngine::set_label_registry()` requires `&mut self` and is intended for single-threaded configuration. In multithreaded contexts prefer keeping a registry handle and calling `reload()` on it.
+
 ## Groups
 
 Groups are listed as the principal entity type `Group`, and to permit access to member of a group, you can use the `in` operator. If you say `principal in Group::"admins"`, it will match any principal that is a member of the group `admins`, but if you say `principal == Group::"admins"`, it will only match the group itself, not its members. You will almost always want to use the `in` operator when dealing with groups...

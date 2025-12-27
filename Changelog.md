@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `EngineSnapshot` public API for immutable, batch-consistent evaluation
+  - `PolicyEngine::snapshot()` to capture a frozen view of policies and labelers
+  - `EngineSnapshot::evaluate(&Request)` self-contained evaluation
+  - `EngineSnapshot::version()` and `EngineSnapshot::policy_set()` for diagnostics
 - `LabelRegistry` struct for managing resource labelers with per-engine ownership
 - `LabelRegistryBuilder` with typestate pattern for safe progressive labeler initialization
 - `PolicyEngine::with_label_registry()` method to configure labels at engine creation
@@ -31,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Snapshot semantics now truly freeze labels: snapshots capture the actual labeler list (not just a registry pointer)
+- `PolicyEngine::evaluate()` now delegates to `engine.snapshot().evaluate(&request)` for consistency
+- Evaluation builds context from the labeled resource to avoid divergence between context and attributes
+- Removed duplicate insertion of the resource entity during evaluation
+- Documented thread-safety for `set_label_registry()`; prefer `LabelRegistry::reload()` for runtime updates
 - **BREAKING**: Label registry moved from global static to per-engine instance
   - Global `init_label_registry()` and `apply_labels()` functions removed.
   - Users must migrate to `LabelRegistryBuilder` with `PolicyEngine::with_label_registry()`
@@ -54,6 +63,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI cargo-insta installation now uses `taiki-e/install-action@v2` for better caching and faster builds
 - Internal test infrastructure optimized with lock-free atomic counters for metrics collection
 - `EvaluationPhases::overhead_ms()` now guarantees non-negative values using `max(0.0, ...)` to handle timing precision edge cases
+
+### Performance
+
+- Reduced per-evaluation overhead by moving the labeler set `ArcSwap` load from every `evaluate()` call to snapshot creation time
+- Snapshot evaluations no longer perform atomic loads for labelers; batch evaluations benefit the most
+
+### Fixed
+
+- Built evaluation `Context` from the labeled resource
+- Avoided inserting duplicate resource entities into the Cedar `Entities` set
 
 ### Migration Guide
 

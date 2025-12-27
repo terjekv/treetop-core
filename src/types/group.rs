@@ -144,14 +144,11 @@ mod tests {
     ) {
         let group = Group::from_str(group_str).unwrap();
         assert_eq!(group.id.id(), expected_id);
-        assert_eq!(
-            group.id.namespace().to_vec(),
-            expected_namespace.unwrap_or_default()
-        );
-        assert_eq!(
-            group.cedar_id(),
-            quote_last_element(group_str)
-        );
+        match &expected_namespace {
+            Some(ns) => assert_eq!(group.id.namespace(), ns.as_slice()),
+            None => assert!(group.id.namespace().is_empty()),
+        }
+        assert_eq!(group.cedar_id(), quote_last_element(group_str));
     }
 
     fn quote_last_element(s: &str) -> String {
@@ -206,7 +203,11 @@ mod tests {
         let mut count = 0;
         for group in groups {
             count += 1;
-            assert!(group.id().id() == "admins" || group.id().id() == "users" || group.id().id() == "developers");
+            assert!(
+                group.id().id() == "admins"
+                    || group.id().id() == "users"
+                    || group.id().id() == "developers"
+            );
         }
         assert_eq!(count, 3);
     }

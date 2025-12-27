@@ -110,6 +110,16 @@ impl LabelRegistry {
     pub fn reload(&self, labelers: Vec<Arc<dyn Labeler>>) {
         self.inner.store(Arc::new(labelers));
     }
+
+    /// Capture a snapshot of the current labeler list.
+    ///
+    /// Returns an immutable copy of the labeler list at this moment in time.
+    /// This is used internally by `EngineSnapshot` to freeze the labeling rules
+    /// along with policies, ensuring true immutability even if the registry
+    /// is later modified via `reload()`.
+    pub(crate) fn snapshot_labelers(&self) -> Arc<Vec<Arc<dyn Labeler>>> {
+        self.inner.load_full()
+    }
 }
 
 /// Builder for creating a LabelRegistry with labelers.
