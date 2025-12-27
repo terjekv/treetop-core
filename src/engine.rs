@@ -243,8 +243,8 @@ impl PolicyEngine {
 
         // Build resource entity from the (now augmented) attrs
 
-        let entities_start = std::time::Instant::now();
         // 1. Turn your Atom types into EntityUids (the “P, A, R” in PARC)
+        let entities_start = std::time::Instant::now();
         #[cfg(feature = "observability")]
         let _entity_span = info_span!("construct_entities").entered();
         let principal: EntityUid = request.principal.cedar_entity_uid()?;
@@ -269,6 +269,9 @@ impl PolicyEngine {
         let resource_entity =
             cedar_policy::Entity::new(resource.clone(), resource_attrs, Default::default())?;
 
+        #[cfg(feature = "observability")]
+        drop(_entity_span);
+
         let entities_duration = entities_start.elapsed();
 
         // 3. Create the Cedar request
@@ -284,6 +287,16 @@ impl PolicyEngine {
             let g = group.cedar_entity_uid()?;
             group_uids.insert(g);
         }
+        #[cfg(feature = "observability")]
+        drop(_groups_span);
+        let groups_duration = groups_start.elapsed();
+
+        debug!(
+            event = "Request",
+            phase = "GroupsResolved",
+            time = groups_duration.as_micros(),
+            group_uids = ?group_uids
+        );
 
         // 4b. Create an Entity for the principal, with the EntityUid of those groups as parents
         let principal_entity = Entity::new(principal.clone(), HashMap::new(), group_uids.clone())?;
@@ -302,11 +315,11 @@ impl PolicyEngine {
                 schema,
             )?
             .add_entities(group_entities, schema)?;
-        let groups_duration = groups_start.elapsed();
 
         debug!(
             event = "Request",
             phase = "Entities",
+            time = entities_duration.as_micros(),
             entities = entities
                 .iter()
                 .map(|e| format!("[{e}]"))

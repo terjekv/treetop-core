@@ -30,8 +30,26 @@ impl AsRef<str> for CedarType {
     }
 }
 
+/// Error type for parsing Cedar types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseCedarTypeError {
+    pub invalid_type: String,
+}
+
+impl std::fmt::Display for ParseCedarTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Unknown Cedar type: '{}'. Valid types are: User, Group, Principal, Action, Resource",
+            self.invalid_type
+        )
+    }
+}
+
+impl std::error::Error for ParseCedarTypeError {}
+
 impl std::str::FromStr for CedarType {
-    type Err = String;
+    type Err = ParseCedarTypeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -40,7 +58,9 @@ impl std::str::FromStr for CedarType {
             "Principal" => Ok(Self::Principal),
             "Action" => Ok(Self::Action),
             "Resource" => Ok(Self::Resource),
-            _ => Err(format!("Unknown Cedar type: {}", s)),
+            _ => Err(ParseCedarTypeError {
+                invalid_type: s.to_string(),
+            }),
         }
     }
 }
@@ -69,8 +89,14 @@ mod tests {
         use std::str::FromStr;
         assert_eq!(CedarType::from_str("User").unwrap(), CedarType::User);
         assert_eq!(CedarType::from_str("Group").unwrap(), CedarType::Group);
-        assert_eq!(CedarType::from_str("Principal").unwrap(), CedarType::Principal);
-        assert_eq!(CedarType::from_str("Resource").unwrap(), CedarType::Resource);
+        assert_eq!(
+            CedarType::from_str("Principal").unwrap(),
+            CedarType::Principal
+        );
+        assert_eq!(
+            CedarType::from_str("Resource").unwrap(),
+            CedarType::Resource
+        );
         assert_eq!(CedarType::from_str("Action").unwrap(), CedarType::Action);
         assert!(CedarType::from_str("Unknown").is_err());
     }

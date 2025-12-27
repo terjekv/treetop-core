@@ -24,7 +24,7 @@ pub struct PolicyVersion {
 
 impl Display for PolicyVersion {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{} @ {})", self.hash, self.loaded_at)
+        write!(f, "{} @ {}", self.hash, self.loaded_at)
     }
 }
 
@@ -128,15 +128,18 @@ mod tests {
             hash: "test123".to_string(),
             loaded_at: "2023-01-01T00:00:00Z".to_string(),
         };
-        
+
         let decision = Decision::from_decision_with_policy(
             cedar_policy::Decision::Allow,
             policy.clone(),
             version.clone(),
         );
-        
+
         match decision {
-            Decision::Allow { policy: p, version: v } => {
+            Decision::Allow {
+                policy: p,
+                version: v,
+            } => {
                 assert_eq!(p.literal, policy.literal);
                 assert_eq!(v.hash, version.hash);
             }
@@ -151,13 +154,13 @@ mod tests {
             hash: "test123".to_string(),
             loaded_at: "2023-01-01T00:00:00Z".to_string(),
         };
-        
+
         let decision = Decision::from_decision_with_policy(
             cedar_policy::Decision::Deny,
             policy,
             version.clone(),
         );
-        
+
         match decision {
             Decision::Deny { version: v } => {
                 assert_eq!(v.hash, version.hash);
@@ -183,11 +186,11 @@ mod tests {
             hash: "abc123".to_string(),
             loaded_at: "2023-01-01T00:00:00Z".to_string(),
         };
-        
+
         let decision = Decision::Allow { policy, version };
         let serialized = serde_json::to_value(&decision).unwrap();
         let deserialized: Decision = serde_json::from_value(serialized).unwrap();
-        
+
         match deserialized {
             Decision::Allow { version: v, .. } => {
                 assert_eq!(v.hash, "abc123");
@@ -202,10 +205,10 @@ mod tests {
             hash: "abc123".to_string(),
             loaded_at: "2023-01-01T00:00:00Z".to_string(),
         };
-        
+
         let serialized = serde_json::to_value(&version).unwrap();
         let deserialized: PolicyVersion = serde_json::from_value(serialized).unwrap();
-        
+
         assert_eq!(version.hash, deserialized.hash);
         assert_eq!(version.loaded_at, deserialized.loaded_at);
     }
@@ -228,7 +231,7 @@ mod tests {
         };
         let decision = Decision::Deny { version };
         let cloned = decision.clone();
-        
+
         match cloned {
             Decision::Deny { version: v } => {
                 assert_eq!(v.hash, "abc123");

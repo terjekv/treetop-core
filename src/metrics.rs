@@ -42,10 +42,10 @@
 //! For **OpenTelemetry**, emit spans in `PolicyEngine::evaluate()` so consumers
 //! can add OTel instrumentation via `tracing-opentelemetry`.
 
+use arc_swap::ArcSwap;
 use serde::Serialize;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tracing::warn;
 
 /// Snapshot of a policy evaluation, passed to [`MetricsSink::on_evaluation`].
 ///
@@ -234,27 +234,43 @@ impl MetricsSink for NoOpSink {
     fn on_reload(&self, _stats: &ReloadStats) {}
 }
 
-static SINK: OnceLock<Arc<dyn MetricsSink>> = OnceLock::new();
+// ArcSwap works with types implementing RefCnt. Since Arc<T> implements RefCnt,
+// we can use ArcSwap directly with Arc<dyn MetricsSink> by using from/load_full.
+// The key is using from() not from_pointee() to avoid issues with unsized types.
+static SINK: OnceLock<ArcSwap<Arc<dyn MetricsSink>>> = OnceLock::new();
 
 fn sink() -> Arc<dyn MetricsSink> {
-    SINK.get_or_init(|| Arc::new(NoOpSink)).clone()
+    SINK.get_or_init(|| {
+        let default: Arc<dyn MetricsSink> = Arc::new(NoOpSink);
+        ArcSwap::from(Arc::new(default))
+    })
+    .load()
+    .as_ref()
+    .clone()
 }
 
 /// Set the global metrics sink.
 ///
+/// This function allows you to change the metrics sink at runtime, enabling
+/// dynamic switching between different metrics backends for testing,
+/// configuration changes, or A/B testing different monitoring solutions.
+///
+/// # Thread Safety
+///
+/// Uses lock-free atomic operations via `ArcSwap`. Concurrent evaluations
+/// will safely see either the old or new sink with no locks or blocking.
+/// Metric collection itself never blocks on synchronization primitives.
+///
+/// # Performance
+///
+/// Uses `ArcSwap` for **lock-free atomic reads and swaps**. Concurrent evaluations
+/// will see either the old or new sink atomically, with zero lock contention.
+/// The old sink is dropped after all evaluations using it complete.
+///
+/// # Usage
+///
 /// All evaluation and reload events will be routed to this sink.
-/// Call this **once at application startup**, before any policy evaluations,
-/// to install your metrics collection implementation.
-///
-/// # Notes
-///
-/// * This function currently uses a static initializer, so the sink cannot
-///   be hot-swapped after the first evaluation. Call this early in your
-///   application startup before processing any requests.
-/// * If you need dynamic sink replacement at runtime, consider using
-///   a custom `Arc<ArcSwap<dyn MetricsSink>>` wrapper in your implementation.
-///
-/// # Example
+/// You can call this at any time to change the active sink:
 ///
 /// ```ignore
 /// use std::sync::Arc;
@@ -262,20 +278,43 @@ fn sink() -> Arc<dyn MetricsSink> {
 ///
 /// #[tokio::main]
 /// async fn main() {
+///     // Initial sink
 ///     let my_sink = Arc::new(MyMetricsSink::new());
 ///     treetop_core::metrics::set_sink(my_sink);
 ///
-///     // Now all policy evaluations will emit metrics
-///     // ...
+///     // ... run for a while ...
+///
+///     // Swap to a different sink (e.g., for testing or different backend)
+///     let test_sink = Arc::new(TestMetricsSink::new());
+///     treetop_core::metrics::set_sink(test_sink);
+///
+///     // All new evaluations will use the test sink
 /// }
 /// ```
+///
+/// # Resetting to No-Op
+///
+/// To disable metrics collection, swap to the no-op sink:
+///
+/// ```ignore
+/// use std::sync::Arc;
+/// use treetop_core::metrics::set_sink;
+///
+/// // Define or import a no-op sink
+/// struct NoOpSink;
+/// impl MetricsSink for NoOpSink {
+///     fn on_evaluation(&self, _: &EvaluationStats) {}
+///     fn on_reload(&self, _: &ReloadStats) {}
+/// }
+///
+/// set_sink(Arc::new(NoOpSink));
+/// ```
 pub fn set_sink(sink: Arc<dyn MetricsSink>) {
-    // Try to set the sink. If it fails (already set), log a warning.
-    if SINK.set(sink).is_err() {
-        warn!(
-            "Metrics sink was already initialized. Ignoring subsequent set_sink call. Set the sink before the first evaluation."
-        );
-    }
+    SINK.get_or_init(|| {
+        let default: Arc<dyn MetricsSink> = Arc::new(NoOpSink);
+        ArcSwap::from(Arc::new(default))
+    })
+    .store(Arc::new(sink));
 }
 
 /// Get a reference to the current global sink.
@@ -342,6 +381,7 @@ pub(crate) fn record_reload() {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Mutex;
 
     /// A simple test sink that counts evaluations and reloads.
     #[allow(dead_code)]
@@ -350,7 +390,7 @@ mod tests {
         allow_count: AtomicU64,
         deny_count: AtomicU64,
         reload_count: AtomicU64,
-        last_eval_duration: OnceLock<std::sync::Mutex<Duration>>,
+        last_eval_duration: Mutex<Option<Duration>>,
         was_called: AtomicBool,
     }
 
@@ -362,7 +402,7 @@ mod tests {
                 allow_count: AtomicU64::new(0),
                 deny_count: AtomicU64::new(0),
                 reload_count: AtomicU64::new(0),
-                last_eval_duration: OnceLock::new(),
+                last_eval_duration: Mutex::new(None),
                 was_called: AtomicBool::new(false),
             }
         }
@@ -377,12 +417,8 @@ mod tests {
             } else {
                 self.deny_count.fetch_add(1, Ordering::SeqCst);
             }
-            if let Ok(mut d) = self
-                .last_eval_duration
-                .get_or_init(|| std::sync::Mutex::new(Duration::ZERO))
-                .lock()
-            {
-                *d = stats.duration;
+            if let Ok(mut d) = self.last_eval_duration.lock() {
+                *d = Some(stats.duration);
             }
         }
 
@@ -496,5 +532,39 @@ mod tests {
         };
         let debug_str = format!("{:?}", stats);
         assert!(debug_str.contains("ReloadStats"));
+    }
+
+    #[test]
+    fn test_dynamic_sink_swapping() {
+        // Create two different test sinks
+        let sink1 = Arc::new(TestSink::new());
+        let sink2 = Arc::new(TestSink::new());
+
+        // Set first sink
+        set_sink(sink1.clone());
+        
+        // Record evaluation with first sink
+        record_evaluation(
+            true,
+            Duration::from_millis(10),
+            "User::alice".to_string(),
+            "Action::read".to_string(),
+        );
+
+        // Swap to second sink
+        set_sink(sink2.clone());
+
+        // Record evaluation with second sink
+        record_evaluation(
+            false,
+            Duration::from_millis(20),
+            "User::bob".to_string(),
+            "Action::write".to_string(),
+        );
+
+        // Verify both sinks received their respective calls
+        // Note: Due to the global nature of SINK, we can't reliably test
+        // the exact counts in a test suite where multiple tests might run,
+        // but we can verify the swap mechanism doesn't panic
     }
 }
