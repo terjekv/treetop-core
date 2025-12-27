@@ -57,13 +57,13 @@ impl FromStr for Group {
         let parts = split_string_into_cedar_parts(s)?;
 
         let expected = Self::cedar_type();
-        #[allow(clippy::collapsible_if)] // https://github.com/rust-lang/rust/issues/53667
-        if let Some(type_part) = parts.type_part {
-            if type_part != expected {
+        match parts.type_part.as_deref() {
+            Some(tp) if tp != expected => {
                 return Err(PolicyError::InvalidFormat(format!(
-                    "Failed to parse group: expected type '{expected}', found type '{type_part}' in '{s}' (expected format: [Namespace::]*Group::group_id)"
+                    "Failed to parse group: expected type '{expected}', found type '{tp}' in '{s}' (expected format: [Namespace::]*Group::group_id)"
                 )));
             }
+            _ => {}
         }
 
         Ok(Group::new(parts.id, parts.namespace))
@@ -106,11 +106,21 @@ impl Display for Groups {
     }
 }
 
-impl Iterator for Groups {
+impl IntoIterator for Groups {
     type Item = Group;
+    type IntoIter = std::vec::IntoIter<Group>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.pop()
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Groups {
+    type Item = &'a Group;
+    type IntoIter = std::slice::Iter<'a, Group>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
 

@@ -652,7 +652,7 @@ permit (
 
         let request = Request {
             principal: Principal::User(User::new(user, None, None)),
-            action: action.into(),
+            action: Action::new(action, None),
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
@@ -670,7 +670,7 @@ permit (
 
         let request = Request {
             principal: Principal::User(User::new(user, None, None)),
-            action: action.into(),
+            action: Action::new(action, None),
             resource: Resource::new("Host", host_name)
                 .with_attr("name", AttrValue::String(host_name.into()))
                 .with_attr("ip", AttrValue::Ip(ip.into())),
@@ -684,7 +684,7 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
         let request = Request {
             principal: Principal::User(User::new("bob", None, None)),
-            action: "view".into(),
+            action: Action::new("view", None),
             resource: Resource::from_str("Photo::VacationPhoto94.jpg").unwrap(),
         };
 
@@ -765,7 +765,7 @@ permit (
 
         let request = Request {
             principal: Principal::User(User::new(user, None, None)),
-            action: action.into(),
+            action: Action::new(action, None),
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
@@ -803,7 +803,7 @@ permit (
 
         let request = Request {
             principal: Principal::User(User::new(username, None, None)),
-            action: "create_host".into(),
+            action: Action::new("create_host", None),
             resource: Resource::new("Host", host_name.to_string())
                 .with_attr("name", AttrValue::String(host_name.into()))
                 .with_attr("ip", AttrValue::Ip("10.0.0.1".into())),
@@ -821,7 +821,7 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY_ACTION_ONLY_HERE).unwrap();
         let request = Request {
             principal: Principal::User(User::new(username, None, None)),
-            action: "only_here".into(),
+            action: Action::new("only_here", None),
             resource: Resource::new("Photo", "irrelevant_photo.jpg")
                 .with_attr("name", AttrValue::String("irrelevant.example.com".into()))
                 .with_attr("ip", AttrValue::Ip("10.0.0.1".into())),
@@ -840,7 +840,7 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY_GENERIC_RESOURCE).unwrap();
         let request = Request {
             principal: Principal::User(User::new(user, None, None)),
-            action: action.into(),
+            action: Action::new(action, None),
             resource: Resource::new("Gateway", resource_id.to_string()),
         };
         let decision = engine.evaluate(&request).unwrap();
@@ -861,7 +861,7 @@ permit (
 
         let request = Request {
             principal: Principal::User(User::new(user, Some(vec![group.to_string()]), None)),
-            action: action.into(),
+            action: Action::new(action, None),
             resource,
         };
         let decision = engine.evaluate(&request).unwrap();
@@ -882,7 +882,7 @@ permit (
 
         let request = Request {
             principal: Principal::Group(Group::new(group, None)),
-            action: action.into(),
+            action: Action::new(action, None),
             resource,
         };
 
@@ -895,7 +895,7 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY_BY_ID).unwrap();
         let request = Request {
             principal: Principal::User(User::new("alice", Some(vec!["admins".to_string()]), None)),
-            action: "view".into(),
+            action: Action::new("view", None),
             resource: Resource::new("Photo", "VacationPhoto94.jpg".to_string()),
         };
         let decision = engine.evaluate(&request).unwrap();

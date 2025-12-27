@@ -3,6 +3,7 @@
 
 use crate::metrics::{EvaluationPhases, EvaluationStats, MetricsSink, ReloadStats};
 use crate::{Action, Decision, PolicyEngine, Principal, Request, Resource, User};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -12,87 +13,86 @@ const DNS_POLICY: &str = include_str!("../../testdata/dns.cedar");
 /// A simple test metrics sink that collects all metrics in memory.
 #[derive(Clone)]
 struct TestMetricsSink {
-    data: Arc<Mutex<TestMetricsData>>,
-}
-
-struct TestMetricsData {
-    eval_count: usize,
-    allow_count: usize,
-    deny_count: usize,
-    reload_count: usize,
-    principal_ids: Vec<String>,
-    action_ids: Vec<String>,
-    total_duration_ms: f64,
-    phases: Vec<EvaluationPhases>,
+    eval_count: Arc<AtomicUsize>,
+    allow_count: Arc<AtomicUsize>,
+    deny_count: Arc<AtomicUsize>,
+    reload_count: Arc<AtomicUsize>,
+    total_duration_micros: Arc<AtomicU64>,
+    principal_ids: Arc<Mutex<Vec<String>>>,
+    action_ids: Arc<Mutex<Vec<String>>>,
+    phases: Arc<Mutex<Vec<EvaluationPhases>>>,
 }
 
 impl TestMetricsSink {
     fn new() -> Self {
         Self {
-            data: Arc::new(Mutex::new(TestMetricsData {
-                eval_count: 0,
-                allow_count: 0,
-                deny_count: 0,
-                reload_count: 0,
-                principal_ids: Vec::new(),
-                action_ids: Vec::new(),
-                total_duration_ms: 0.0,
-                phases: Vec::new(),
-            })),
+            eval_count: Arc::new(AtomicUsize::new(0)),
+            allow_count: Arc::new(AtomicUsize::new(0)),
+            deny_count: Arc::new(AtomicUsize::new(0)),
+            reload_count: Arc::new(AtomicUsize::new(0)),
+            total_duration_micros: Arc::new(AtomicU64::new(0)),
+            principal_ids: Arc::new(Mutex::new(Vec::new())),
+            action_ids: Arc::new(Mutex::new(Vec::new())),
+            phases: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     fn eval_count(&self) -> usize {
-        self.data.lock().unwrap().eval_count
+        self.eval_count.load(Ordering::Relaxed)
     }
 
     fn allow_count(&self) -> usize {
-        self.data.lock().unwrap().allow_count
+        self.allow_count.load(Ordering::Relaxed)
     }
 
     fn deny_count(&self) -> usize {
-        self.data.lock().unwrap().deny_count
+        self.deny_count.load(Ordering::Relaxed)
     }
 
     fn principal_ids(&self) -> Vec<String> {
-        self.data.lock().unwrap().principal_ids.clone()
+        self.principal_ids.lock().unwrap().clone()
     }
 
     fn action_ids(&self) -> Vec<String> {
-        self.data.lock().unwrap().action_ids.clone()
+        self.action_ids.lock().unwrap().clone()
     }
 
     fn total_duration_ms(&self) -> f64 {
-        self.data.lock().unwrap().total_duration_ms
+        self.total_duration_micros.load(Ordering::Relaxed) as f64 / 1_000.0
     }
 
     fn phases(&self) -> Vec<EvaluationPhases> {
-        self.data.lock().unwrap().phases.clone()
+        self.phases.lock().unwrap().clone()
     }
 }
 
 impl MetricsSink for TestMetricsSink {
     fn on_evaluation(&self, stats: &EvaluationStats) {
-        let mut data = self.data.lock().unwrap();
-        data.eval_count += 1;
+        self.eval_count.fetch_add(1, Ordering::Relaxed);
         if stats.allowed {
-            data.allow_count += 1;
+            self.allow_count.fetch_add(1, Ordering::Relaxed);
         } else {
-            data.deny_count += 1;
+            self.deny_count.fetch_add(1, Ordering::Relaxed);
         }
-        data.principal_ids.push(stats.principal_id.clone());
-        data.action_ids.push(stats.action_id.clone());
-        data.total_duration_ms += stats.duration.as_secs_f64() * 1000.0;
+        if let Ok(mut v) = self.principal_ids.lock() {
+            v.push(stats.principal_id.clone());
+        }
+        if let Ok(mut v) = self.action_ids.lock() {
+            v.push(stats.action_id.clone());
+        }
+        let micros = (stats.duration.as_secs_f64() * 1_000_000.0) as u64;
+        self.total_duration_micros
+            .fetch_add(micros, Ordering::Relaxed);
     }
 
     fn on_reload(&self, _stats: &ReloadStats) {
-        let mut data = self.data.lock().unwrap();
-        data.reload_count += 1;
+        self.reload_count.fetch_add(1, Ordering::Relaxed);
     }
 
     fn on_evaluation_phases(&self, _stats: &EvaluationStats, phases: &EvaluationPhases) {
-        let mut data = self.data.lock().unwrap();
-        data.phases.push(phases.clone());
+        if let Ok(mut p) = self.phases.lock() {
+            p.push(phases.clone());
+        }
     }
 }
 
@@ -104,7 +104,7 @@ fn collect_metrics_from_evaluations(
     requests: Vec<Request>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::traits::CedarAtom;
-    
+
     for request in requests {
         let principal_id = match &request.principal {
             Principal::User(user) => user.cedar_id(),
@@ -176,7 +176,11 @@ fn test_metrics_integration_with_dns_policy() {
     let _ = collect_metrics_from_evaluations(&engine, &test_sink, requests);
 
     // Verify total evaluations
-    assert_eq!(test_sink.eval_count(), 9, "Should have recorded 9 evaluations");
+    assert_eq!(
+        test_sink.eval_count(),
+        9,
+        "Should have recorded 9 evaluations"
+    );
 
     // Verify allow/deny split
     // Expected: alice (admin) allows all, bob (user) allows view_host, charlie (admin) allows create/view/edit
@@ -229,15 +233,27 @@ fn test_metrics_integration_with_dns_policy() {
     // Count evaluations per principal
     let alice_count = principal_ids.iter().filter(|p| p.contains("alice")).count();
     let bob_count = principal_ids.iter().filter(|p| p.contains("bob")).count();
-    let charlie_count = principal_ids.iter().filter(|p| p.contains("charlie")).count();
+    let charlie_count = principal_ids
+        .iter()
+        .filter(|p| p.contains("charlie"))
+        .count();
     assert_eq!(alice_count, 3, "Alice should have 3 evaluations");
     assert_eq!(bob_count, 3, "Bob should have 3 evaluations");
     assert_eq!(charlie_count, 3, "Charlie should have 3 evaluations");
 
     // Count evaluations per action
-    let view_count = action_ids.iter().filter(|a| a.contains("view_host")).count();
-    let edit_count = action_ids.iter().filter(|a| a.contains("edit_host")).count();
-    let delete_count = action_ids.iter().filter(|a| a.contains("delete_host")).count();
+    let view_count = action_ids
+        .iter()
+        .filter(|a| a.contains("view_host"))
+        .count();
+    let edit_count = action_ids
+        .iter()
+        .filter(|a| a.contains("edit_host"))
+        .count();
+    let delete_count = action_ids
+        .iter()
+        .filter(|a| a.contains("delete_host"))
+        .count();
     assert_eq!(view_count, 3, "view_host should have 3 evaluations");
     assert_eq!(edit_count, 3, "edit_host should have 3 evaluations");
     assert_eq!(delete_count, 3, "delete_host should have 3 evaluations");
@@ -247,10 +263,10 @@ fn test_metrics_phase_tracking() {
     // This test verifies that phase tracking data structures are correctly populated.
     // Since the global sink may already be set by other tests, we test by actually
     // running an evaluation and checking that the phases data makes sense structurally.
-    
+
     let engine = PolicyEngine::new_from_str(DNS_POLICY).expect("Failed to create engine");
     let ns = Some(vec![NAMESPACE.to_string()]);
-    
+
     // Run a single evaluation
     let request = Request {
         principal: Principal::User(User::new(
@@ -261,11 +277,11 @@ fn test_metrics_phase_tracking() {
         action: Action::new("view_host", ns.clone()),
         resource: Resource::new("Host", "hostname.example.com"),
     };
-    
+
     // This will internally call record_evaluation_phases if the sink supports it
     let result = engine.evaluate(&request);
     assert!(result.is_ok(), "Evaluation should succeed");
-    
+
     // Test that EvaluationPhases struct can be constructed and used
     use std::time::Duration;
     let test_phases = EvaluationPhases {
@@ -275,28 +291,46 @@ fn test_metrics_phase_tracking() {
         authorize_ms: 2.5,
         total_ms: 5.0,
     };
-    
+
     // All phase durations should be non-negative
-    assert!(test_phases.apply_labels_ms >= 0.0, "Label phase should be non-negative");
-    assert!(test_phases.construct_entities_ms >= 0.0, "Entity construction phase should be non-negative");
-    assert!(test_phases.resolve_groups_ms >= 0.0, "Group resolution phase should be non-negative");
-    assert!(test_phases.authorize_ms >= 0.0, "Authorization phase should be non-negative");
-    assert!(test_phases.total_ms >= 0.0, "Total duration should be non-negative");
-    
+    assert!(
+        test_phases.apply_labels_ms >= 0.0,
+        "Label phase should be non-negative"
+    );
+    assert!(
+        test_phases.construct_entities_ms >= 0.0,
+        "Entity construction phase should be non-negative"
+    );
+    assert!(
+        test_phases.resolve_groups_ms >= 0.0,
+        "Group resolution phase should be non-negative"
+    );
+    assert!(
+        test_phases.authorize_ms >= 0.0,
+        "Authorization phase should be non-negative"
+    );
+    assert!(
+        test_phases.total_ms >= 0.0,
+        "Total duration should be non-negative"
+    );
+
     // Test overhead calculation
     let overhead = test_phases.overhead_ms();
     assert!(overhead >= 0.0, "Overhead should be non-negative");
-    assert_eq!(overhead, 0.0, "Overhead should be zero when sum equals total");
-    
+    assert_eq!(
+        overhead, 0.0,
+        "Overhead should be zero when sum equals total"
+    );
+
     // Test with actual overhead
     let phases_with_overhead = EvaluationPhases {
         apply_labels_ms: 0.5,
         construct_entities_ms: 1.0,
         resolve_groups_ms: 0.5,
         authorize_ms: 2.0,
-        total_ms: 5.0,  // 1.0ms overhead
+        total_ms: 5.0, // 1.0ms overhead
     };
-    
+
     let overhead2 = phases_with_overhead.overhead_ms();
     assert!(
         (overhead2 - 1.0).abs() < 0.001,

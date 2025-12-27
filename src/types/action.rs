@@ -57,28 +57,20 @@ impl FromStr for Action {
         let parts = split_string_into_cedar_parts(s)?;
 
         let expected = Self::cedar_type();
-        #[allow(clippy::collapsible_if)] // https://github.com/rust-lang/rust/issues/53667
-        if let Some(type_part) = parts.type_part {
-            if type_part != expected {
+        match parts.type_part.as_deref() {
+            Some(tp) if tp != expected => {
                 return Err(PolicyError::InvalidFormat(format!(
-                    "Failed to parse action: expected type '{expected}', found type '{type_part}' in '{s}' (expected format: [Namespace::]*Action::action_id)"
+                    "Failed to parse action: expected type '{expected}', found type '{tp}' in '{s}' (expected format: [Namespace::]*Action::action_id)"
                 )));
             }
+            _ => {}
         }
 
         Ok(Action::new(parts.id, parts.namespace))
     }
 }
 
-impl<T> From<T> for Action
-where
-    T: Into<String>,
-{
-    fn from(v: T) -> Self {
-        let v = v.into();
-        Action::from_str(&v).unwrap_or_else(|_| Action::new(v, None))
-    }
-}
+// Intentionally omit `From<String>` to avoid silently swallowing parse errors.
 
 #[cfg(test)]
 mod tests {
@@ -107,10 +99,7 @@ mod tests {
     fn test_action_from_str(action_str: &str, expected_id: &str) {
         let action = Action::from_str(action_str).unwrap();
         assert_eq!(action.id.id(), expected_id);
-        assert_eq!(
-            action.cedar_id(),
-            quote_last_element(action_str)
-        );
+        assert_eq!(action.cedar_id(), quote_last_element(action_str));
     }
 
     fn some_str_to_string(input: Option<Vec<&str>>) -> Option<Vec<String>> {

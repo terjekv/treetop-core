@@ -43,8 +43,8 @@ impl UserPolicies {
         self.policies.is_empty()
     }
 
-    pub fn actions(&self) -> Vec<EntityUid> {
-        self.actions.clone()
+    pub fn actions(&self) -> &[EntityUid] {
+        &self.actions
     }
 
     pub fn policies(&self) -> &[Policy] {

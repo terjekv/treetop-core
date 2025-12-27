@@ -37,11 +37,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: Labeling now happens per-engine rather than globally
   - Each `PolicyEngine` instance can have its own configured labels
   - Label application during evaluation uses the engine's registry if configured
+- **BREAKING**: `UserPolicies::actions()` now returns `&[EntityUid]` instead of `Vec<EntityUid>`
+  - Eliminates unnecessary cloning on every call; callers can use `.to_vec()` if ownership is needed
+- **BREAKING**: `Groups` now implements `IntoIterator` instead of `Iterator`
+  - Previous `Iterator` implementation was destructive (consumed via `pop()`)
+  - Use `.into_iter()` for owned iteration or `&groups` for borrowed iteration
+- **BREAKING**: Removed `From<T>` trait implementation for `Action`
+  - Previously silently created actions on parse failure using fallback behavior
+  - Use `Action::new(id, namespace)` explicitly or `Action::from_str()` for parsing
+  - Ensures parse errors are visible to callers rather than swallowed
 - Replaced `once_cell` dependency with standard library `OnceLock` (Rust 1.70+)
 - Improved error context with detailed Cedar error information
 - Magic strings replaced with `CedarType` enum throughout codebase
 - `PolicyEngine::Clone` is preserved for backward compatibility; use `Arc<PolicyEngine>` for idiomatic thread sharing
 - CI now builds, tests, and runs clippy with `--all-features`, and rejects unreferenced snapshots
+- Internal test infrastructure optimized with lock-free atomic counters for metrics collection
 
 ### Migration Guide
 

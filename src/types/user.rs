@@ -97,13 +97,13 @@ impl FromStr for User {
         };
 
         let expected = Self::cedar_type();
-        #[allow(clippy::collapsible_if)] // https://github.com/rust-lang/rust/issues/53667
-        if let Some(type_part) = parts.type_part {
-            if type_part != expected {
+        match parts.type_part.as_deref() {
+            Some(tp) if tp != expected => {
                 return Err(PolicyError::InvalidFormat(format!(
-                    "Failed to parse user: expected type '{expected}', found type '{type_part}' in '{s}' (expected format: [Namespace::]*User::user_id[group1,group2,...])"
+                    "Failed to parse user: expected type '{expected}', found type '{tp}' in '{s}' (expected format: [Namespace::]*User::user_id[group1,group2,...])"
                 )));
             }
+            _ => {}
         }
 
         Ok(User::new(parts.id, groups, parts.namespace))
@@ -154,6 +154,7 @@ mod tests {
         assert_eq!(
             user.groups()
                 .clone()
+                .into_iter()
                 .map(|g| g.id().id().to_string())
                 .collect::<Vec<_>>()
                 .len(),
