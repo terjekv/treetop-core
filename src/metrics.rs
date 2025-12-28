@@ -12,7 +12,7 @@
 //!
 //! Implement the [`MetricsSink`] trait to process evaluation and reload events:
 //!
-//! ```ignore
+//! ```rust
 //! use treetop_core::metrics::{MetricsSink, EvaluationStats, ReloadStats};
 //! use std::sync::atomic::{AtomicU64, Ordering};
 //! use std::sync::Arc;
@@ -61,7 +61,7 @@ use std::time::Duration;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```rust
 /// use treetop_core::metrics::EvaluationStats;
 /// use std::time::Duration;
 ///
@@ -140,7 +140,7 @@ impl EvaluationPhases {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```rust
 /// use treetop_core::metrics::ReloadStats;
 ///
 /// let stats = ReloadStats {
@@ -177,7 +177,7 @@ pub struct ReloadStats {
 ///
 /// # Example: Simple Counter Sink
 ///
-/// ```ignore
+/// ```rust
 /// use treetop_core::metrics::{MetricsSink, EvaluationStats, ReloadStats};
 /// use std::sync::atomic::{AtomicU64, Ordering};
 /// use std::sync::Arc;
@@ -278,8 +278,9 @@ fn sink() -> Arc<dyn MetricsSink> {
 /// All evaluation and reload events will be routed to this sink.
 /// You can call this at any time to change the active sink:
 ///
-/// ```ignore
+/// ```rust,ignore
 /// use std::sync::Arc;
+/// use tokio;
 /// use treetop_core::metrics::{set_sink, MetricsSink};
 ///
 /// #[tokio::main]
@@ -302,9 +303,9 @@ fn sink() -> Arc<dyn MetricsSink> {
 ///
 /// To disable metrics collection, swap to the no-op sink:
 ///
-/// ```ignore
+/// ```rust
 /// use std::sync::Arc;
-/// use treetop_core::metrics::set_sink;
+/// use treetop_core::metrics::{MetricsSink, EvaluationStats, ReloadStats, set_sink};
 ///
 /// // Define or import a no-op sink
 /// struct NoOpSink;
