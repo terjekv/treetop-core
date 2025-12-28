@@ -21,7 +21,9 @@ jobs:
     - name: Run tests (all features)
       run: cargo test --verbose --all-features
     - name: Install cargo-insta
-      run: cargo install cargo-insta
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-insta
     - name: Check snapshots (reject unreferenced in CI)
       run: cargo insta test --all-features --unreferenced auto -- -q
     - name: Run clippy (all features)

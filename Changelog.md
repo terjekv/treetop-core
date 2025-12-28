@@ -51,7 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Magic strings replaced with `CedarType` enum throughout codebase
 - `PolicyEngine::Clone` is preserved for backward compatibility; use `Arc<PolicyEngine>` for idiomatic thread sharing
 - CI now builds, tests, and runs clippy with `--all-features`, and rejects unreferenced snapshots
+- CI cargo-insta installation now uses `taiki-e/install-action@v2` for better caching and faster builds
 - Internal test infrastructure optimized with lock-free atomic counters for metrics collection
+- `EvaluationPhases::overhead_ms()` now guarantees non-negative values using `max(0.0, ...)` to handle timing precision edge cases
 
 ### Migration Guide
 

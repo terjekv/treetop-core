@@ -114,16 +114,22 @@ pub struct EvaluationPhases {
 }
 
 impl EvaluationPhases {
-    /// Calculate overhead time (time not accounted for in measured phases)
+    /// Calculate overhead time (time not accounted for in measured phases).
+    ///
+    /// Returns the difference between total time and the sum of individual phases.
+    /// Uses `max(0.0, ...)` to ensure the result is never negative, which can
+    /// occur due to timing precision or measurement overhead.
     pub fn overhead_ms(&self) -> f64 {
-        self.total_ms
+        (self.total_ms
             - (self.apply_labels_ms
                 + self.construct_entities_ms
                 + self.resolve_groups_ms
-                + self.authorize_ms)
+                + self.authorize_ms))
+            .max(0.0)
     }
 }
 
+/// Snapshot of a policy reload event, passed to [`MetricsSink::on_reload`].
 ///
 /// This struct captures the timestamp when a policy reload completed.
 /// Consumers can use this to track when policy updates take effect.
@@ -380,8 +386,8 @@ pub(crate) fn record_reload() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     /// A simple test sink that counts evaluations and reloads.
     #[allow(dead_code)]
@@ -542,7 +548,7 @@ mod tests {
 
         // Set first sink
         set_sink(sink1.clone());
-        
+
         // Record evaluation with first sink
         record_evaluation(
             true,
