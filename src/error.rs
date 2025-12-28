@@ -3,6 +3,7 @@ use cedar_policy::{
 };
 use cedar_policy_core::entities::err::EntitiesError;
 use serde::{Deserialize, Serialize};
+use std::sync::{PoisonError, RwLockReadGuard};
 use thiserror::Error;
 
 /// Policy evaluation and validation errors.
@@ -83,11 +84,11 @@ impl From<EntitiesError> for PolicyError {
     }
 }
 
-impl From<std::sync::PoisonError<std::sync::RwLockReadGuard<'_, cedar_policy::PolicySet>>>
+impl From<PoisonError<RwLockReadGuard<'_, cedar_policy::PolicySet>>>
     for PolicyError
 {
     fn from(
-        err: std::sync::PoisonError<std::sync::RwLockReadGuard<'_, cedar_policy::PolicySet>>,
+        err: PoisonError<RwLockReadGuard<'_, cedar_policy::PolicySet>>,
     ) -> Self {
         PolicyError::PoisonedLockError(err.to_string())
     }

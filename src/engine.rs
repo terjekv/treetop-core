@@ -4,7 +4,7 @@ use cedar_policy::{
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use std::vec;
 
 use crate::labels::LabelRegistry;
@@ -20,6 +20,11 @@ use sha2::{Digest, Sha256};
 #[cfg(feature = "observability")]
 use tracing::info_span;
 use tracing::{debug, info, warn};
+
+#[cfg(feature = "observability")]
+use crate::metrics::{
+    EvaluationPhases, EvaluationStats, record_evaluation, record_evaluation_phases, record_reload,
+};
 
 /// Immutable snapshot of a compiled policy set, along with metadata.
 #[derive(Debug)]
@@ -118,7 +123,7 @@ impl PolicyEngine {
         self.inner.store(Arc::new(new_snapshot));
         // Track reloads for metrics (no-op if feature disabled or no sink configured)
         #[cfg(feature = "observability")]
-        crate::metrics::record_reload();
+        record_reload();
         Ok(())
     }
 
@@ -208,7 +213,7 @@ impl PolicyEngine {
             Principal::Group(_) => Groups::default(),
         };
 
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let snapshot = self.current_snapshot();
         let version = snapshot.version();
 
@@ -225,7 +230,7 @@ impl PolicyEngine {
         let mut resource_dyn = request.resource.clone();
 
         // Apply labels if a registry is configured
-        let labels_start = std::time::Instant::now();
+        let labels_start = Instant::now();
         {
             #[cfg(feature = "observability")]
             let _label_span = info_span!("apply_labels").entered();
@@ -280,7 +285,7 @@ impl PolicyEngine {
         // 4. Create Entities for the request
         #[cfg(feature = "observability")]
         let _groups_span = info_span!("resolve_groups").entered();
-        let groups_start = std::time::Instant::now();
+        let groups_start = Instant::now();
         // 4a. Create EntityUids for each group
         let mut group_uids = HashSet::new();
         for group in groups.clone() {
@@ -384,22 +389,24 @@ impl PolicyEngine {
             let allowed = result.decision() == cedar_policy::Decision::Allow;
             let principal_id = request.principal.to_string();
             let action_id = request.action.to_string();
-            crate::metrics::record_evaluation(
+            let stats = EvaluationStats {
+                duration: dur,
                 allowed,
-                dur,
-                principal_id.clone(),
-                action_id.clone(),
-            );
+                principal_id,
+                action_id,
+            };
 
             // Also record detailed phase timings
-            let phases = crate::metrics::EvaluationPhases {
+            let phases = EvaluationPhases {
                 apply_labels_ms: labels_duration.as_secs_f64() * 1000.0,
                 construct_entities_ms: entities_duration.as_secs_f64() * 1000.0,
                 resolve_groups_ms: groups_duration.as_secs_f64() * 1000.0,
                 authorize_ms: authz_duration.as_secs_f64() * 1000.0,
-                total_ms: dur.as_secs_f64() * 1000.0,
+                total_ms: stats.duration.as_secs_f64() * 1000.0,
             };
-            crate::metrics::record_evaluation_phases(allowed, dur, principal_id, action_id, phases);
+
+            record_evaluation(&stats);
+            record_evaluation_phases(&stats, &phases);
         }
 
         Ok(Decision::from_decision_with_policy(

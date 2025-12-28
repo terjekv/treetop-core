@@ -45,7 +45,7 @@
 use arc_swap::ArcSwap;
 use serde::Serialize;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 /// Snapshot of a policy evaluation, passed to [`MetricsSink::on_evaluation`].
 ///
@@ -151,7 +151,7 @@ impl EvaluationPhases {
 #[derive(Debug, Clone, Serialize)]
 pub struct ReloadStats {
     /// Time when the reload completed
-    pub reload_time: std::time::SystemTime,
+    pub reload_time: SystemTime,
 }
 
 /// Trait for consuming evaluation and reload metrics.
@@ -336,40 +336,18 @@ pub(crate) fn get_sink() -> Arc<dyn MetricsSink> {
 ///
 /// This is called internally by `PolicyEngine::evaluate` and should not be
 /// called directly by consumers. It dispatches the metrics to the global sink.
-pub(crate) fn record_evaluation(
-    allowed: bool,
-    duration: Duration,
-    principal_id: String,
-    action_id: String,
-) {
+pub(crate) fn record_evaluation(stats: &EvaluationStats) {
     let sink = get_sink();
-    sink.on_evaluation(&EvaluationStats {
-        duration,
-        allowed,
-        principal_id,
-        action_id,
-    });
+    sink.on_evaluation(stats);
 }
 
 /// Record detailed phase-level metrics.
 ///
 /// This is called internally by `PolicyEngine::evaluate` if phase timings
 /// are collected. It dispatches the phase metrics to the sink.
-pub(crate) fn record_evaluation_phases(
-    allowed: bool,
-    duration: Duration,
-    principal_id: String,
-    action_id: String,
-    phases: EvaluationPhases,
-) {
+pub(crate) fn record_evaluation_phases(stats: &EvaluationStats, phases: &EvaluationPhases) {
     let sink = get_sink();
-    let stats = EvaluationStats {
-        duration,
-        allowed,
-        principal_id,
-        action_id,
-    };
-    sink.on_evaluation_phases(&stats, &phases);
+    sink.on_evaluation_phases(stats, phases);
 }
 
 /// Record a reload event.
@@ -380,7 +358,7 @@ pub(crate) fn record_evaluation_phases(
 pub(crate) fn record_reload() {
     let sink = get_sink();
     sink.on_reload(&ReloadStats {
-        reload_time: std::time::SystemTime::now(),
+        reload_time: SystemTime::now(),
     });
 }
 
@@ -449,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_reload_stats_serialization() {
-        let now = std::time::SystemTime::now();
+        let now = SystemTime::now();
         let stats = ReloadStats { reload_time: now };
         let json = serde_json::to_string(&stats).unwrap();
         // Just ensure it serializes without error
@@ -459,18 +437,21 @@ mod tests {
     #[test]
     fn test_record_evaluation_with_no_op_sink() {
         // Default sink is no-op, so this should not panic
-        record_evaluation(
-            true,
-            Duration::from_millis(100),
-            "User::test".to_string(),
-            "Action::test".to_string(),
-        );
-        record_evaluation(
-            false,
-            Duration::from_millis(50),
-            "User::alice".to_string(),
-            "Action::view".to_string(),
-        );
+        let stats1 = EvaluationStats {
+            duration: Duration::from_millis(100),
+            allowed: true,
+            principal_id: "User::test".to_string(),
+            action_id: "Action::test".to_string(),
+        };
+        record_evaluation(&stats1);
+
+        let stats2 = EvaluationStats {
+            duration: Duration::from_millis(50),
+            allowed: false,
+            principal_id: "User::alice".to_string(),
+            action_id: "Action::view".to_string(),
+        };
+        record_evaluation(&stats2);
     }
 
     #[test]
@@ -491,7 +472,7 @@ mod tests {
         // Should not panic
         sink.on_evaluation(&stats);
         let reload_stats = ReloadStats {
-            reload_time: std::time::SystemTime::now(),
+            reload_time: SystemTime::now(),
         };
         sink.on_reload(&reload_stats);
     }
@@ -513,7 +494,7 @@ mod tests {
 
     #[test]
     fn test_reload_stats_clone() {
-        let now = std::time::SystemTime::now();
+        let now = SystemTime::now();
         let stats1 = ReloadStats { reload_time: now };
         let stats2 = stats1.clone();
         assert_eq!(stats1.reload_time, stats2.reload_time);
@@ -535,7 +516,7 @@ mod tests {
     #[test]
     fn test_reload_stats_debug() {
         let stats = ReloadStats {
-            reload_time: std::time::SystemTime::now(),
+            reload_time: SystemTime::now(),
         };
         let debug_str = format!("{:?}", stats);
         assert!(debug_str.contains("ReloadStats"));
@@ -551,23 +532,25 @@ mod tests {
         set_sink(sink1.clone());
 
         // Record evaluation with first sink
-        record_evaluation(
-            true,
-            Duration::from_millis(10),
-            "User::alice".to_string(),
-            "Action::read".to_string(),
-        );
+        let stats1 = EvaluationStats {
+            duration: Duration::from_millis(10),
+            allowed: true,
+            principal_id: "User::alice".to_string(),
+            action_id: "Action::read".to_string(),
+        };
+        record_evaluation(&stats1);
 
         // Swap to second sink
         set_sink(sink2.clone());
 
         // Record evaluation with second sink
-        record_evaluation(
-            false,
-            Duration::from_millis(20),
-            "User::bob".to_string(),
-            "Action::write".to_string(),
-        );
+        let stats2 = EvaluationStats {
+            duration: Duration::from_millis(20),
+            allowed: false,
+            principal_id: "User::bob".to_string(),
+            action_id: "Action::write".to_string(),
+        };
+        record_evaluation(&stats2);
 
         // Verify both sinks received their respective calls
         // Note: Due to the global nature of SINK, we can't reliably test
