@@ -1,5 +1,5 @@
 ---
-source: src/models.rs
+source: src/types/user.rs
 expression: user.cedar_id()
 ---
 namespace1::User::"test_user"

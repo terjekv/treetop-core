@@ -1,17 +1,11 @@
 ---
-source: src/models.rs
+source: src/types/user.rs
 expression: serialized
 ---
 {
   "groups": [
     {
       "id": "group1",
-      "namespace": [
-        "namespace1"
-      ]
-    },
-    {
-      "id": "group2",
       "namespace": [
         "namespace1"
       ]

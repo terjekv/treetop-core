@@ -16,9 +16,15 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
-    - name: Run clippy
-      run: cargo clippy --verbose
+    - name: Build (all features)
+      run: cargo build --verbose --all-features
+    - name: Run tests (all features)
+      run: cargo test --verbose --all-features
+    - name: Install cargo-insta
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-insta
+    - name: Check snapshots (reject unreferenced in CI)
+      run: cargo insta test --all-features --unreferenced auto -- -q
+    - name: Run clippy (all features)
+      run: cargo clippy --verbose --all-features
