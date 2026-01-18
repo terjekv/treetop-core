@@ -5,9 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.0.13] - 2026-18-01
 
 ### Added
+
+- Metrics & Observability (feature `observability`):
+  - `MetricsSink` trait to collect `EvaluationStats` and `ReloadStats`
+  - Per-phase timing for labels, entities, groups, authorize
+  - Examples for Prometheus and OpenTelemetry tracing
+  - See [docs/Metrics.md](docs/Metrics.md) for details
 
 - `LabelRegistry` struct for managing resource labelers with per-engine ownership
 - `LabelRegistryBuilder` with typestate pattern for safe progressive labeler initialization
@@ -22,12 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - FromStr implementation tests with edge cases
   - Label registry behavior tests
   - Metrics and observability tests across types
-
-- Metrics & Observability (feature `observability`):
-  - `MetricsSink` trait to collect `EvaluationStats` and `ReloadStats`
-  - Per-phase timing for labels, entities, groups, authorize
-  - Examples for Prometheus and OpenTelemetry tracing
-  - See [docs/Metrics.md](docs/Metrics.md) for details
 
 ### Changed
 
@@ -46,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Previously silently created actions on parse failure using fallback behavior
   - Use `Action::new(id, namespace)` explicitly or `Action::from_str()` for parsing
   - Ensures parse errors are visible to callers rather than swallowed
-- Replaced `once_cell` dependency with standard library `OnceLock` (Rust 1.70+)
+- Replaced `once_cell` dependency with standard library `OnceLock`
 - Improved error context with detailed Cedar error information
 - Magic strings replaced with `CedarType` enum throughout codebase
 - `PolicyEngine::Clone` is preserved for backward compatibility; use `Arc<PolicyEngine>` for idiomatic thread sharing

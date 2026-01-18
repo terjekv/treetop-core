@@ -1,6 +1,6 @@
 [package]
 name = "treetop-core"
-version = "0.0.12"
+version = "0.0.13"
 edition = "2024"
 license = "MIT"
 description = "Core library for Treetop, a Cedar policy engine implementation."
@@ -35,7 +35,7 @@ vergen = { version = "9", features = [
     "rustc",
     "si",
 ] }
-vergen-gitcl = { version = "1", features = [
+vergen-gitcl = { version = "9", features = [
     "emit_and_set",
     "build",
     "cargo",
