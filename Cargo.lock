@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "treetop-core"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "arc-swap",
  "cedar-policy",

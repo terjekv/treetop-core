@@ -120,10 +120,11 @@ fn extract_permit_policy<'a>(
     // Take the first matching policy from the diagnostics
     if let Some(reason) = result.diagnostics().reason().next() {
         if let Some(permit_policy) = snapshot.permit_policies.get(reason) {
-            let policy_id = permit_policy
-                .id_ref()
-                .unwrap_or_else(|| permit_policy.literal.as_str());
-            info!(event = "Request", phase = "PermitPolicy", policy_id,);
+            info!(
+                event = "Request",
+                phase = "PermitPolicy",
+                policy_id = permit_policy.id()
+            );
             return Some(permit_policy);
         } else {
             warn!(

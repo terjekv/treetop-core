@@ -29,17 +29,11 @@ impl PermitPolicy {
     /// Returns the ID of the policy if available.
     ///
     /// IDs should be in annotations > id field in the JSON representation, or an @id line in the literal.
-    pub fn id(&self) -> Option<String> {
-        self.annotation_id
-            .as_deref()
-            .or(Some(self.cedar_id.as_str()))
-            .map(ToString::to_string)
-    }
-
-    pub fn id_ref(&self) -> Option<&str> {
-        self.annotation_id
-            .as_deref()
-            .or(Some(self.cedar_id.as_str()))
+    pub fn id(&self) -> &String {
+        match &self.annotation_id {
+            Some(id) => id,
+            None => &self.cedar_id,
+        }
     }
 
     fn extract_annotation_id(literal: &str, json: &Value) -> Option<String> {

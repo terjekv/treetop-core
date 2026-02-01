@@ -5,16 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.14] - 2026-02-01
 
 ### Changed
 
-- **BREAKING**: `PermitPolicy` now exposes public fields (`literal`, `json`, `annotation_id`, `cedar_id`)
-  - Removed private field accessors; access fields directly instead of via `policy.literal()` → `policy.literal`
-  - `annotation_id` and `cedar_id` are now included in for full policy metadata transparency
+- **BREAKING**: `PermitPolicy` now has two new fields (`annotation_id` and `cedar_id`)
+  - Removed private field accessors; access fields directly instead of via `policy.literal()` → `policy.literal` and so on
 - **BREAKING**: `PermitPolicy::new()` signature changed to require `cedar_id` parameter
   - Old: `new(literal, json)`
   - New: `new(literal, json, cedar_id)` (cedar_id always comes from Cedar's PolicySet)
+- Logs now include `policy_id` (either annotation_id or cedar_id) when logging the matched policy during evaluation, instead of the complete policy content, making logs much more concise
 
 ### Added
 
@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `annotation_id` (from `@id` annotation or JSON annotations.id field) now precomputed on policy load
   - `cedar_id` (from Cedar's internal PolicyId) stored directly in `PermitPolicy`
   - Eliminates per-request policy serialization overhead
+  - `annotation_id` is `Option<String>`, while `cedar_id` is always `String`
+  - Use `permit_policy.id()` to get the best available ID as `&str`
 
 ## [0.0.13] - 2026-18-01
 
