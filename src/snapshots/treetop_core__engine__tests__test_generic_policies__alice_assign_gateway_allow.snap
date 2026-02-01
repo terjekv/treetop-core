@@ -46,7 +46,9 @@ expression: decision
             }
           }
         ]
-      }
+      },
+      "annotation_id": null,
+      "cedar_id": "policy0"
     },
     "version": {
       "hash": "fc7246a50468ef5f93eeb9098c10506a11bb611869fc68ec3999662ce7f60080",

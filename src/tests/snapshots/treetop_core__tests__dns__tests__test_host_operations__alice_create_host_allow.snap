@@ -44,7 +44,9 @@ expression: decision
         "annotations": {
           "id": "DNS.admins_policy"
         }
-      }
+      },
+      "annotation_id": "DNS.admins_policy",
+      "cedar_id": "policy0"
     },
     "version": {
       "hash": "d7efadba123ba2cfa6cf1768a1db2a82b5a199190b1b9d344243d976e2b0f790",

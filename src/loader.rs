@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use crate::error::PolicyError;
-use cedar_policy::{ParseErrors, PolicySet};
+use crate::types::PermitPolicy;
+use cedar_policy::{ParseErrors, PolicyId, PolicySet};
 
 /// Compile Cedar policy text into a `PolicySet`.
 ///
@@ -18,6 +21,20 @@ use cedar_policy::{ParseErrors, PolicySet};
 pub fn compile_policy(text: &str) -> Result<PolicySet, PolicyError> {
     text.parse()
         .map_err(|e: ParseErrors| PolicyError::ParseError(e.to_string()))
+}
+
+/// Precompute permit policy metadata for fast lookup during evaluation.
+pub fn precompute_permit_policies(set: &PolicySet) -> HashMap<PolicyId, PermitPolicy> {
+    set.policies()
+        .map(|policy| {
+            let permit_policy = PermitPolicy::new(
+                policy.to_string(),
+                policy.to_json().unwrap_or_default(),
+                policy.id().to_string(),
+            );
+            (policy.id().clone(), permit_policy)
+        })
+        .collect()
 }
 
 #[cfg(test)]

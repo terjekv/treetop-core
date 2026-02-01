@@ -27,7 +27,9 @@ expression: decision
           "entity_type": "Photo"
         },
         "conditions": []
-      }
+      },
+      "annotation_id": null,
+      "cedar_id": "policy1"
     },
     "version": {
       "hash": "6c98ea03a20df481c3e64392c9b0e028d0149b1e134e268eaf80302ac3d73b0f",

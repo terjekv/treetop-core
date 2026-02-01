@@ -14,12 +14,16 @@ pub trait CedarAtom {
     fn cedar_type() -> &'static str;
 
     /// Build a Cedar parent list for this atom, default is no parents.
+    #[allow(dead_code)]
     fn cedar_parents(&self) -> HashSet<EntityUid> {
         // Default: no parent type
         HashSet::new()
     }
 
     /// Build an entity for this Cedar atom, e.g. `User::"alice"` or `Host::"flappa.example.com"`.
+    ///
+    /// Public API: may be used by external consumers or future refactorings.
+    #[allow(dead_code)]
     fn cedar_entity(&self) -> Result<Entity, PolicyError> {
         let entity_uid = self.cedar_entity_uid()?;
         let attrs = self.cedar_attr()?;

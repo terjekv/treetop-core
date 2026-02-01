@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING**: `PermitPolicy` now exposes public fields (`literal`, `json`, `annotation_id`, `cedar_id`)
+  - Removed private field accessors; access fields directly instead of via `policy.literal()` → `policy.literal`
+  - `annotation_id` and `cedar_id` are now included in for full policy metadata transparency
+- **BREAKING**: `PermitPolicy::new()` signature changed to require `cedar_id` parameter
+  - Old: `new(literal, json)`
+  - New: `new(literal, json, cedar_id)` (cedar_id always comes from Cedar's PolicySet)
+
+### Added
+
+- Policy metadata precomputation at load time for improved hot-path performance
+  - `annotation_id` (from `@id` annotation or JSON annotations.id field) now precomputed on policy load
+  - `cedar_id` (from Cedar's internal PolicyId) stored directly in `PermitPolicy`
+  - Eliminates per-request policy serialization overhead
+
 ## [0.0.13] - 2026-18-01
 
 ### Added

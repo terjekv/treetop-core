@@ -26,7 +26,9 @@ expression: decision
           "op": "All"
         },
         "conditions": []
-      }
+      },
+      "annotation_id": null,
+      "cedar_id": "policy0"
     },
     "version": {
       "hash": "8ee801346ef35e003f5a68c2208335024adec814c18c9912f7aa483200e9b703",

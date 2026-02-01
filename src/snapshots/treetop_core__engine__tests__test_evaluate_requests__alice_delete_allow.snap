@@ -40,7 +40,9 @@ expression: decision
           }
         },
         "conditions": []
-      }
+      },
+      "annotation_id": null,
+      "cedar_id": "policy0"
     },
     "version": {
       "hash": "367a1bf718b961945a55eb68ef47778eab2db0ed787476147c9a77dd83833686",

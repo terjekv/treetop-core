@@ -25,7 +25,9 @@ expression: decision
         "annotations": {
           "id": "id_of_policy"
         }
-      }
+      },
+      "annotation_id": "id_of_policy",
+      "cedar_id": "policy0"
     },
     "version": {
       "hash": "852f6a7634b8b382e732f7c6eab7376f447b2dc007b038c3f4af768c2fffcd70",

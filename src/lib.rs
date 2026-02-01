@@ -114,5 +114,6 @@ pub mod metrics;
 #[cfg(not(feature = "observability"))]
 mod metrics;
 mod tests;
+mod timers;
 mod traits;
 pub mod types;

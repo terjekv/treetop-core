@@ -78,7 +78,9 @@ expression: decision
             }
           }
         ]
-      }
+      },
+      "annotation_id": null,
+      "cedar_id": "policy1"
     },
     "version": {
       "hash": "fb81c2dc092d8f992659f666106894bb0cde22932f2ee2a819b4d8cbc81bfc94",

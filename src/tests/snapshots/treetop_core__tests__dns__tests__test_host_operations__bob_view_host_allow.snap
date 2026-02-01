@@ -30,7 +30,9 @@ expression: decision
         "annotations": {
           "id": "DNS.users_policy"
         }
-      }
+      },
+      "annotation_id": "DNS.users_policy",
+      "cedar_id": "policy2"
     },
     "version": {
       "hash": "d7efadba123ba2cfa6cf1768a1db2a82b5a199190b1b9d344243d976e2b0f790",

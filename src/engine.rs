@@ -1,13 +1,14 @@
 use cedar_policy::{
-    Authorizer, Entities, Entity, EntityUid, Policy, PolicySet, PrincipalConstraint,
+    Authorizer, Entities, Entity, EntityUid, Policy, PolicyId, PolicySet, PrincipalConstraint,
     Request as CedarRequest,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use std::vec;
 
 use crate::labels::LabelRegistry;
+use crate::timers::PhaseTimer;
 use crate::traits::CedarAtom;
 use crate::types::{
     Decision, FromDecisionWithPolicy, PermitPolicy, PolicyVersion, Request, UserPolicies,
@@ -26,11 +27,54 @@ use crate::metrics::{
     EvaluationPhases, EvaluationStats, record_evaluation, record_evaluation_phases, record_reload,
 };
 
+/// Aggregates timing information for all evaluation phases.
+#[derive(Debug)]
+struct EvalTimers {
+    /// Total elapsed time from start of evaluation
+    total_start: Instant,
+    /// Time spent applying labels
+    labels: Duration,
+    /// Time spent constructing Cedar request
+    construct_req: Duration,
+    /// Time spent building Cedar entities
+    entities: Duration,
+    /// Time spent resolving groups
+    groups: Duration,
+    /// Time spent performing authorization
+    authz: Duration,
+}
+
+impl EvalTimers {
+    fn start() -> Self {
+        Self {
+            total_start: Instant::now(),
+            labels: Duration::ZERO,
+            construct_req: Duration::ZERO,
+            entities: Duration::ZERO,
+            groups: Duration::ZERO,
+            authz: Duration::ZERO,
+        }
+    }
+
+    fn total_elapsed(&self) -> Duration {
+        self.total_start.elapsed()
+    }
+}
+
+/// Result of preparing a request for authorization: Cedar request, entities, snapshot, and phase timings.
+struct PreparedRequest {
+    cedar_req: CedarRequest,
+    entities: Entities,
+    snapshot: Snapshot,
+    timers: EvalTimers,
+}
+
 /// Immutable snapshot of a compiled policy set, along with metadata.
 #[derive(Debug)]
 struct PolicySnapshot {
     set: PolicySet,
     version: PolicyVersion,
+    permit_policies: HashMap<PolicyId, PermitPolicy>,
 }
 
 /// Convenience alias for a shared policy snapshot.
@@ -39,6 +83,7 @@ type Snapshot = Arc<PolicySnapshot>;
 impl PolicySnapshot {
     fn from_policy_text(policy_text: &str) -> Result<Self, PolicyError> {
         let set = loader::compile_policy(policy_text)?;
+        let permit_policies = loader::precompute_permit_policies(&set);
 
         let mut hasher = Sha256::new();
         hasher.update(policy_text.as_bytes());
@@ -50,6 +95,7 @@ impl PolicySnapshot {
                 hash,
                 loaded_at: humantime::format_rfc3339(SystemTime::now()).to_string(),
             },
+            permit_policies,
         })
     }
 
@@ -61,6 +107,145 @@ impl PolicySnapshot {
         self.version.clone()
     }
 }
+
+/// Extract the permit policy from the Cedar authorization result.
+fn extract_permit_policy<'a>(
+    snapshot: &'a PolicySnapshot,
+    result: &cedar_policy::Response,
+) -> Option<&'a PermitPolicy> {
+    if result.decision() != cedar_policy::Decision::Allow {
+        return None;
+    }
+
+    // Take the first matching policy from the diagnostics
+    if let Some(reason) = result.diagnostics().reason().next() {
+        if let Some(permit_policy) = snapshot.permit_policies.get(reason) {
+            let policy_id = permit_policy
+                .id_ref()
+                .unwrap_or_else(|| permit_policy.literal.as_str());
+            info!(event = "Request", phase = "PermitPolicy", policy_id,);
+            return Some(permit_policy);
+        } else {
+            warn!(
+                event = "Request",
+                phase = "PermitPolicy",
+                policy_id = reason.to_string()
+            );
+        }
+    }
+    None
+}
+
+/// Iterate over groups from a request principal.
+fn request_groups(request: &Request) -> Option<&Groups> {
+    match &request.principal {
+        Principal::User(user) => Some(user.groups()),
+        Principal::Group(_) => None,
+    }
+}
+
+/// Apply label augmentations to a resource.
+fn apply_labels(
+    registry: &Option<Arc<LabelRegistry>>,
+    resource: &mut crate::types::Resource,
+    timers: &mut EvalTimers,
+) {
+    let _timer = PhaseTimer::new(&mut timers.labels);
+    #[cfg(feature = "observability")]
+    let _label_span = info_span!("apply_labels").entered();
+    if let Some(registry) = registry {
+        registry.apply(resource);
+    }
+}
+
+/// Build a Cedar request from the authorization request and resource.
+fn build_cedar_req(
+    request: &Request,
+    resource: &crate::types::Resource,
+    timers: &mut EvalTimers,
+) -> Result<CedarRequest, PolicyError> {
+    let _timer = PhaseTimer::new(&mut timers.construct_req);
+    #[cfg(feature = "observability")]
+    let _req_span = info_span!("construct_cedar_req").entered();
+    let principal = request.principal.cedar_entity_uid()?;
+    let action = request.action.cedar_entity_uid()?;
+    let resource_uid = resource.cedar_entity_uid()?;
+    let context = resource.cedar_ctx()?;
+
+    Ok(CedarRequest::new(
+        principal,
+        action,
+        resource_uid,
+        context,
+        None,
+    )?)
+}
+
+/// Build Cedar entities for the principal, resource, and groups.
+fn build_entities(
+    request: &Request,
+    resource: &crate::types::Resource,
+    groups: Option<&Groups>,
+    timers: &mut EvalTimers,
+) -> Result<Entities, PolicyError> {
+    let schema: Option<&cedar_policy::Schema> = None;
+
+    // Time and measure entity construction
+    let entities = {
+        let _timer = PhaseTimer::new(&mut timers.entities);
+        #[cfg(feature = "observability")]
+        let _entity_span = info_span!("construct_entities").entered();
+
+        // Collect group UIDs
+        let group_uids = {
+            let _timer = PhaseTimer::new(&mut timers.groups);
+            #[cfg(feature = "observability")]
+            let _groups_span = info_span!("resolve_groups").entered();
+
+            match groups {
+                Some(groups) => groups
+                    .into_iter()
+                    .map(|g| g.cedar_entity_uid())
+                    .collect::<Result<_, _>>()?,
+                None => HashSet::new(),
+            }
+        };
+
+        // Construct resource entity
+        let resource_uid = resource.cedar_entity_uid()?;
+        let resource_attrs = resource.cedar_attr()?;
+        let resource_entity =
+            cedar_policy::Entity::new(resource_uid.clone(), resource_attrs, Default::default())?;
+
+        // Construct principal entity with groups as parents
+        let principal_uid = request.principal.cedar_entity_uid()?;
+        let principal_entity =
+            Entity::new(principal_uid.clone(), HashMap::new(), group_uids.clone())?;
+
+        // Construct group entities
+        let group_entities: Vec<Entity> = group_uids.into_iter().map(Entity::with_uid).collect();
+
+        // Combine all entities (use manual resource_entity to include attributes)
+        Entities::empty()
+            .add_entities(vec![principal_entity, resource_entity], schema)?
+            .add_entities(group_entities, schema)?
+    };
+
+    debug!(
+        event = "Request",
+        phase = "Entities",
+        time = timers.entities.as_micros(),
+        entities = entities
+            .iter()
+            .map(|e| format!("[{e}]"))
+            .collect::<Vec<_>>()
+            .join(", ")
+            .replace('\n', "")
+    );
+
+    Ok(entities)
+}
+
 /// The main engine handle. Thread-safe and cheaply cloneable.
 ///
 /// Cloning is cheap (just increments Arc refcounts), but for multithreaded
@@ -142,6 +327,69 @@ impl PolicyEngine {
         self.current_snapshot().version()
     }
 
+    /// Prepare a request for authorization: accumulate labels, build Cedar entities, resolve groups.
+    ///
+    /// This separates request preparation from the authorization decision, making both
+    /// more testable and the main hot path more readable.
+    fn prepare(&self, request: &Request) -> Result<PreparedRequest, PolicyError> {
+        let snapshot = self.current_snapshot();
+        let mut timers = EvalTimers::start();
+
+        let groups = request_groups(request);
+        let mut resource = request.resource.clone();
+
+        debug!(
+            event = "Request",
+            phase = "Evaluation",
+            principal = request.principal.to_string(),
+            action = request.action.to_string(),
+            resource = request.resource.to_string(),
+            groups = %groups.map(ToString::to_string).unwrap_or_else(|| "[]".into())
+        );
+
+        // Apply labels to augment resource attributes
+        apply_labels(&self.label_registry, &mut resource, &mut timers);
+        debug!(
+            event = "Request",
+            phase = "LabelsApplied",
+            time = timers.labels.as_micros(),
+            resource_attrs = ?resource.attrs()
+        );
+
+        // Build Cedar request from resource and request
+        let cedar_req = build_cedar_req(request, &resource, &mut timers)?;
+
+        let resource_uid = resource.cedar_entity_uid()?;
+        let context = resource.cedar_ctx()?;
+
+        debug!(
+            event = "Request",
+            phase = "Parsed",
+            principal = request.principal.cedar_entity_uid()?.to_string(),
+            action = request.action.cedar_entity_uid()?.to_string(),
+            resource = resource_uid.to_string(),
+            context = context.to_string(),
+            groups = %groups.map(ToString::to_string).unwrap_or_else(|| "[]".into()),
+            attrs = ?resource.cedar_attr()
+        );
+
+        // Build entities
+        let entities = build_entities(request, &resource, groups, &mut timers)?;
+
+        debug!(
+            event = "Request",
+            phase = "GroupsResolved",
+            time = timers.groups.as_micros(),
+        );
+
+        Ok(PreparedRequest {
+            cedar_req,
+            entities,
+            snapshot,
+            timers,
+        })
+    }
+
     /// Evaluate a policy request against the currently loaded policy set.
     ///
     /// This method performs a complete Cedar policy evaluation:
@@ -194,198 +442,58 @@ impl PolicyEngine {
     ///
     /// This method is thread-safe and lock-free. Multiple threads can evaluate requests
     /// concurrently without blocking each other.
+    #[cfg_attr(
+        feature = "observability",
+        tracing::instrument(
+            name = "policy_evaluation",
+            skip_all,
+            fields(
+                principal = %request.principal,
+                action = %request.action,
+                resource = %request.resource
+            )
+        )
+    )]
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
-        // Top-level span for OpenTelemetry integration (only when observability feature enabled)
-        #[cfg(feature = "observability")]
-        let span = info_span!(
-            "policy_evaluation",
-            principal = %request.principal,
-            action = %request.action,
-            resource = %request.resource,
-        );
-        #[cfg(feature = "observability")]
-        let _guard = span.enter();
+        // Prepare the request: apply labels, build entities, resolve groups
+        let mut prepared = self.prepare(request)?;
 
-        let schema: Option<&cedar_policy::Schema> = None;
-
-        let groups = match &request.principal {
-            Principal::User(user) => user.groups().clone(),
-            Principal::Group(_) => Groups::default(),
-        };
-
-        let now = Instant::now();
-        let snapshot = self.current_snapshot();
-        let version = snapshot.version();
-
-        debug!(
-            event = "Request",
-            phase = "Evaluation",
-            principal = request.principal.to_string(),
-            action = request.action.to_string(),
-            resource = request.resource.to_string(),
-            groups = groups.to_string()
-        );
-
-        // resource is &request.resource; take a working copy so we can mutate attrs with labels
-        let mut resource_dyn = request.resource.clone();
-
-        // Apply labels if a registry is configured
-        let labels_start = Instant::now();
-        {
+        // Perform authorization with RAII timing
+        let result = {
+            let _timer = PhaseTimer::new(&mut prepared.timers.authz);
             #[cfg(feature = "observability")]
-            let _label_span = info_span!("apply_labels").entered();
-            if let Some(registry) = &self.label_registry {
-                registry.apply(&mut resource_dyn);
-            }
-        }
-        let labels_duration = labels_start.elapsed();
-        debug!(
-            event = "Request",
-            phase = "LabelsApplied",
-            time = labels_duration.as_micros(),
-            resource_attrs = ?resource_dyn.attrs()
-        );
-
-        // Build resource entity from the (now augmented) attrs
-
-        // 1. Turn your Atom types into EntityUids (the “P, A, R” in PARC)
-        let entities_start = std::time::Instant::now();
-        #[cfg(feature = "observability")]
-        let _entity_span = info_span!("construct_entities").entered();
-        let principal: EntityUid = request.principal.cedar_entity_uid()?;
-        let action: EntityUid = request.action.cedar_entity_uid()?;
-        let resource: EntityUid = resource_dyn.cedar_entity_uid()?;
-        let resource_attrs = resource_dyn.cedar_attr()?;
-
-        // 2. Build an Context from the resource, this may be empty.
-        let context = request.resource.cedar_ctx()?;
-
-        debug!(
-            event = "Request",
-            phase = "Parsed",
-            principal = principal.to_string(),
-            action = action.to_string(),
-            resource = resource.to_string(),
-            context = context.to_string(),
-            groups = groups.to_string(),
-            attrs = ?resource_attrs
-        );
-
-        let resource_entity =
-            cedar_policy::Entity::new(resource.clone(), resource_attrs, Default::default())?;
-
-        #[cfg(feature = "observability")]
-        drop(_entity_span);
-
-        let entities_duration = entities_start.elapsed();
-
-        // 3. Create the Cedar request
-        let cedar_req = CedarRequest::new(principal.clone(), action, resource, context, None)?;
-
-        // 4. Create Entities for the request
-        #[cfg(feature = "observability")]
-        let _groups_span = info_span!("resolve_groups").entered();
-        let groups_start = Instant::now();
-        // 4a. Create EntityUids for each group
-        let mut group_uids = HashSet::new();
-        for group in groups.clone() {
-            let g = group.cedar_entity_uid()?;
-            group_uids.insert(g);
-        }
-        #[cfg(feature = "observability")]
-        drop(_groups_span);
-        let groups_duration = groups_start.elapsed();
-
-        debug!(
-            event = "Request",
-            phase = "GroupsResolved",
-            time = groups_duration.as_micros(),
-            group_uids = ?group_uids
-        );
-
-        // 4b. Create an Entity for the principal, with the EntityUid of those groups as parents
-        let principal_entity = Entity::new(principal.clone(), HashMap::new(), group_uids.clone())?;
-
-        // 4c. Create Entities for each group out of the EntityUids we created in 4a
-        let group_entities: Vec<Entity> = group_uids.into_iter().map(Entity::with_uid).collect();
-
-        // 5. Create the complete Entities collection, including the resource, principal, and groups
-        let entities = Entities::empty()
-            .add_entities(
-                vec![
-                    resource_dyn.cedar_entity()?,
-                    principal_entity,
-                    resource_entity,
-                ],
-                schema,
-            )?
-            .add_entities(group_entities, schema)?;
-
-        debug!(
-            event = "Request",
-            phase = "Entities",
-            time = entities_duration.as_micros(),
-            entities = entities
-                .iter()
-                .map(|e| format!("[{e}]"))
-                .collect::<Vec<_>>()
-                .join(", ")
-                .replace('\n', "")
-        );
-
-        // 6. Run the authorizer against the current immutable snapshot
-        #[cfg(feature = "observability")]
-        let _authz_span = info_span!("authorize").entered();
-        let authz_start = std::time::Instant::now();
-        let result = Authorizer::new().is_authorized(&cedar_req, &snapshot.set, &entities);
-        #[cfg(feature = "observability")]
-        drop(_authz_span);
-        let authz_duration = authz_start.elapsed();
+            let _authz_span = info_span!("authorize").entered();
+            Authorizer::new().is_authorized(
+                &prepared.cedar_req,
+                &prepared.snapshot.set,
+                &prepared.entities,
+            )
+        };
 
         debug!(
             event = "Request",
             phase = "Authorized",
-            time = authz_duration.as_micros(),
+            time = prepared.timers.authz.as_micros(),
             decision = ?result.decision(),
         );
 
+        let version = prepared.snapshot.version();
         debug!(
             event = "Request",
             phase = "Result",
-            time = now.elapsed().as_micros(),
+            time = prepared.timers.total_elapsed().as_micros(),
             result = ?result.decision(),
             policy_hash = %version.hash,
             policy_loaded_at = %version.loaded_at,
         );
-        let mut permit_policy = PermitPolicy::default();
 
-        if result.decision() == cedar_policy::Decision::Allow {
-            let reasons = result.diagnostics().reason();
-            for reason in reasons {
-                let policy = snapshot.set.policy(reason);
-                if let Some(policy) = policy {
-                    permit_policy.literal = policy.to_string().clone();
-                    permit_policy.json = policy.to_json().unwrap_or_default();
-                    info!(
-                        event = "Request",
-                        phase = "Policy",
-                        reason = reason.to_string(),
-                        policy = permit_policy.literal
-                    );
-                } else {
-                    warn!(
-                        event = "Request",
-                        phase = "Policy",
-                        reason = reason.to_string()
-                    );
-                }
-            }
-        }
+        // Extract the permit policy from the authorization result
+        let permit_policy = extract_permit_policy(&prepared.snapshot, &result).cloned();
 
-        // Record metrics (no-op when no sink is configured, or when feature is disabled)
+        // Record metrics (no-op when no sink is configured or feature disabled)
         #[cfg(feature = "observability")]
         {
-            let dur = now.elapsed();
+            let dur = prepared.timers.total_elapsed();
             let allowed = result.decision() == cedar_policy::Decision::Allow;
             let principal_id = request.principal.to_string();
             let action_id = request.action.to_string();
@@ -396,12 +504,11 @@ impl PolicyEngine {
                 action_id,
             };
 
-            // Also record detailed phase timings
             let phases = EvaluationPhases {
-                apply_labels_ms: labels_duration.as_secs_f64() * 1000.0,
-                construct_entities_ms: entities_duration.as_secs_f64() * 1000.0,
-                resolve_groups_ms: groups_duration.as_secs_f64() * 1000.0,
-                authorize_ms: authz_duration.as_secs_f64() * 1000.0,
+                apply_labels_ms: prepared.timers.labels.as_secs_f64() * 1000.0,
+                construct_entities_ms: prepared.timers.entities.as_secs_f64() * 1000.0,
+                resolve_groups_ms: prepared.timers.groups.as_secs_f64() * 1000.0,
+                authorize_ms: prepared.timers.authz.as_secs_f64() * 1000.0,
                 total_ms: stats.duration.as_secs_f64() * 1000.0,
             };
 
@@ -416,11 +523,6 @@ impl PolicyEngine {
         ))
     }
 
-    /// List all policies that may apply to a given user (optionally namespaced).
-    ///
-    /// This is useful for diagnostics and tooling that want to show or export
-    /// effective policies for a principal. It matches `principal == User::..`
-    /// and `principal == Any` constraints.
     pub fn list_policies_for_user(
         &self,
         user: &str,

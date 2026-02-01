@@ -6,13 +6,19 @@
 //! metrics backend (Prometheus, OpenTelemetry, CloudWatch, etc.).
 //!
 //! **Note:** This module is only available when the `observability` feature is enabled.
-//! To run the doctests for this module, use: `cargo test --doc --features observability`
+//!
+//! Doctests in this module use `#[cfg(feature = "observability")]` to conditionally
+//! compile: they will pass when the feature is disabled (code compiles away),
+//! and execute when the feature is enabled (including with `cargo test --all-features`)
+//! or `cargo test --features observability`.
 //!
 //! ## Usage
 //!
 //! Implement the [`MetricsSink`] trait to process evaluation and reload events:
 //!
 //! ```rust
+//! # #[cfg(feature = "observability")]
+//! # {
 //! use treetop_core::metrics::{MetricsSink, EvaluationStats, ReloadStats};
 //! use std::sync::atomic::{AtomicU64, Ordering};
 //! use std::sync::Arc;
@@ -34,6 +40,7 @@
 //!
 //! // Set the global sink:
 //! treetop_core::metrics::set_sink(Arc::new(MyMetricsSink { evals: Arc::new(AtomicU64::new(0)) }));
+//! # }
 //! ```
 //!
 //! For **Prometheus**, implement a sink that records to your Prometheus client,
@@ -62,6 +69,8 @@ use std::time::{Duration, SystemTime};
 /// # Example
 ///
 /// ```rust
+/// # #[cfg(feature = "observability")]
+/// # {
 /// use treetop_core::metrics::EvaluationStats;
 /// use std::time::Duration;
 ///
@@ -73,6 +82,7 @@ use std::time::{Duration, SystemTime};
 /// };
 /// println!("Evaluation: {:?}ms, allowed: {}, principal: {}, action: {}",
 ///     stats.duration.as_millis(), stats.allowed, stats.principal_id, stats.action_id);
+/// # }
 /// ```
 #[derive(Debug, Clone, Serialize)]
 pub struct EvaluationStats {
@@ -141,12 +151,15 @@ impl EvaluationPhases {
 /// # Example
 ///
 /// ```rust
+/// # #[cfg(feature = "observability")]
+/// # {
 /// use treetop_core::metrics::ReloadStats;
 ///
 /// let stats = ReloadStats {
 ///     reload_time: std::time::SystemTime::now(),
 /// };
 /// println!("Policy reloaded at: {:?}", stats.reload_time);
+/// # }
 /// ```
 #[derive(Debug, Clone, Serialize)]
 pub struct ReloadStats {
@@ -178,6 +191,8 @@ pub struct ReloadStats {
 /// # Example: Simple Counter Sink
 ///
 /// ```rust
+/// # #[cfg(feature = "observability")]
+/// # {
 /// use treetop_core::metrics::{MetricsSink, EvaluationStats, ReloadStats};
 /// use std::sync::atomic::{AtomicU64, Ordering};
 /// use std::sync::Arc;
@@ -203,6 +218,7 @@ pub struct ReloadStats {
 ///         self.reloads.fetch_add(1, Ordering::Relaxed);
 ///     }
 /// }
+/// # }
 /// ```
 pub trait MetricsSink: Send + Sync {
     /// Called after each policy evaluation with timing and decision info.
@@ -304,6 +320,8 @@ fn sink() -> Arc<dyn MetricsSink> {
 /// To disable metrics collection, swap to the no-op sink:
 ///
 /// ```rust
+/// # #[cfg(feature = "observability")]
+/// # {
 /// use std::sync::Arc;
 /// use treetop_core::metrics::{MetricsSink, EvaluationStats, ReloadStats, set_sink};
 ///
@@ -315,6 +333,7 @@ fn sink() -> Arc<dyn MetricsSink> {
 /// }
 ///
 /// set_sink(Arc::new(NoOpSink));
+/// # }
 /// ```
 pub fn set_sink(sink: Arc<dyn MetricsSink>) {
     SINK.get_or_init(|| {

@@ -101,8 +101,14 @@ impl Groups {
 
 impl Display for Groups {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        let group_names: Vec<String> = self.0.iter().map(|g| g.id().id().to_string()).collect();
-        write!(f, "[{}]", group_names.join(", "))
+        write!(f, "[")?;
+        for (i, g) in self.0.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", g.id().id())?;
+        }
+        write!(f, "]")
     }
 }
 
@@ -148,10 +154,7 @@ mod tests {
             group.id.namespace().to_vec(),
             expected_namespace.unwrap_or_default()
         );
-        assert_eq!(
-            group.cedar_id(),
-            quote_last_element(group_str)
-        );
+        assert_eq!(group.cedar_id(), quote_last_element(group_str));
     }
 
     fn quote_last_element(s: &str) -> String {
@@ -206,7 +209,11 @@ mod tests {
         let mut count = 0;
         for group in groups {
             count += 1;
-            assert!(group.id().id() == "admins" || group.id().id() == "users" || group.id().id() == "developers");
+            assert!(
+                group.id().id() == "admins"
+                    || group.id().id() == "users"
+                    || group.id().id() == "developers"
+            );
         }
         assert_eq!(count, 3);
     }
