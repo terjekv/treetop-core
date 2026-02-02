@@ -2,11 +2,13 @@
 mod tests {
     use std::{collections::HashMap, vec};
 
+    #[cfg(test)]
+    use serial_test::serial;
     use yare::parameterized;
 
     use crate::{
         Action, Decision, Principal, Request, Resource, User, engine::PolicyEngine,
-        types::AttrValue, snapshot_decision,
+        snapshot_decision, types::AttrValue,
     };
 
     const DNS_POLICY: &str = include_str!("../../testdata/dns.cedar");
@@ -75,6 +77,7 @@ mod tests {
         super_create_host_allow = { "super", "create_host" },
         super_delete_host_allow = { "super", "delete_host" }
     )]
+    #[serial(metrics)]
     fn test_host_operations(user: &str, action: &str) {
         let engine = init_engine();
         let user = get_user(user);
@@ -96,6 +99,7 @@ mod tests {
     // we can get either of the two policies in return. This simply tests that she doesn't
     // get denied.
     #[test]
+    #[serial(metrics)]
     fn test_dual_match() {
         let engine = init_engine();
         let user = get_user("alice");

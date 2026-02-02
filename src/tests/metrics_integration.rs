@@ -5,12 +5,12 @@
 //!
 //! These tests verify that the metrics system correctly tracks evaluation statistics,
 //! including matched policy IDs. Due to the use of a global metrics sink, these tests
-//! may interfere with each other when run concurrently.
-//!
-//! To run these tests reliably, use: `cargo test --features observability metrics_integration -- --test-threads=1`
+//! must run serially to avoid interference. This is ensured via the #[serial] attribute.
 
 use crate::metrics::{EvaluationPhases, EvaluationStats, MetricsSink, ReloadStats};
 use crate::{Action, Decision, PolicyEngine, Principal, Request, Resource, User};
+#[cfg(test)]
+use serial_test::serial;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -162,6 +162,7 @@ fn build_test_requests(ns: &Option<Vec<String>>) -> Vec<Request> {
 }
 
 #[test]
+#[serial(metrics)]
 fn test_metrics_integration_with_dns_policy() {
     let engine = PolicyEngine::new_from_str(DNS_POLICY).expect("Failed to create engine");
     let test_sink = TestMetricsSink::new();
@@ -266,6 +267,7 @@ fn test_metrics_integration_with_dns_policy() {
     assert!(with_matches > 0, "At least some evaluations should have matched policies");
 }
 #[test]
+#[serial(metrics)]
 fn test_metrics_phase_tracking() {
     // This test verifies that phase tracking data structures are correctly populated.
     // Since the global sink may already be set by other tests, we test by actually
@@ -347,6 +349,7 @@ fn test_metrics_phase_tracking() {
 }
 
 #[test]
+#[serial(metrics)]
 fn test_matched_policies_tracking() {
     // Test that matched policy IDs are correctly tracked in metrics
     // Note: Cedar assigns sequential IDs (policy0, policy1, etc.) internally
@@ -460,6 +463,7 @@ fn test_matched_policies_tracking() {
 }
 
 #[test]
+#[serial(metrics)]
 fn test_multiple_matched_policies() {
     // Test that when multiple policies match, all are tracked
     // Cedar will assign these as policy0 and policy1

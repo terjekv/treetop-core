@@ -309,6 +309,11 @@ fn main() {
             allowed: !(user == "bob" && action == "delete_host"),
             principal_id: format!("User::{user}"),
             action_id: format!("Action::{action}"),
+            matched_policies: if !(user == "bob" && action == "delete_host") {
+                vec!["policy0".to_string()]
+            } else {
+                vec![]
+            },
         };
         sink.on_evaluation(&stats);
 

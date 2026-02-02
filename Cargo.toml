@@ -51,6 +51,7 @@ observability = []
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+serial_test = "3"
 
 [[example]]
 name = "prometheus_sink"
