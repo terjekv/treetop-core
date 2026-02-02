@@ -4,71 +4,73 @@ expression: decision
 ---
 {
   "Allow": {
-    "policy": {
-      "literal": "permit (\n    principal == User::\"bob\",\n    action == Action::\"create_host\",\n    resource is Host\n) when {\n    resource.nameLabels.contains(\"valid_web_name\") &&\n    resource.nameLabels.contains(\"example_domain\")\n};",
-      "json": {
-        "effect": "permit",
-        "principal": {
-          "op": "==",
-          "entity": {
-            "type": "User",
-            "id": "bob"
-          }
-        },
-        "action": {
-          "op": "==",
-          "entity": {
-            "type": "Action",
-            "id": "create_host"
-          }
-        },
-        "resource": {
-          "op": "is",
-          "entity_type": "Host"
-        },
-        "conditions": [
-          {
-            "kind": "when",
-            "body": {
-              "&&": {
-                "left": {
-                  "contains": {
-                    "left": {
-                      ".": {
-                        "left": {
-                          "Var": "resource"
-                        },
-                        "attr": "nameLabels"
+    "policies": [
+      {
+        "literal": "permit (\n    principal == User::\"bob\",\n    action == Action::\"create_host\",\n    resource is Host\n) when {\n    resource.nameLabels.contains(\"valid_web_name\") &&\n    resource.nameLabels.contains(\"example_domain\")\n};",
+        "json": {
+          "effect": "permit",
+          "principal": {
+            "op": "==",
+            "entity": {
+              "type": "User",
+              "id": "bob"
+            }
+          },
+          "action": {
+            "op": "==",
+            "entity": {
+              "type": "Action",
+              "id": "create_host"
+            }
+          },
+          "resource": {
+            "op": "is",
+            "entity_type": "Host"
+          },
+          "conditions": [
+            {
+              "kind": "when",
+              "body": {
+                "&&": {
+                  "left": {
+                    "contains": {
+                      "left": {
+                        ".": {
+                          "left": {
+                            "Var": "resource"
+                          },
+                          "attr": "nameLabels"
+                        }
+                      },
+                      "right": {
+                        "Value": "valid_web_name"
                       }
-                    },
-                    "right": {
-                      "Value": "valid_web_name"
                     }
-                  }
-                },
-                "right": {
-                  "contains": {
-                    "left": {
-                      ".": {
-                        "left": {
-                          "Var": "resource"
-                        },
-                        "attr": "nameLabels"
+                  },
+                  "right": {
+                    "contains": {
+                      "left": {
+                        ".": {
+                          "left": {
+                            "Var": "resource"
+                          },
+                          "attr": "nameLabels"
+                        }
+                      },
+                      "right": {
+                        "Value": "example_domain"
                       }
-                    },
-                    "right": {
-                      "Value": "example_domain"
                     }
                   }
                 }
               }
             }
-          }
-        ]
-      },
-      "annotation_id": null,
-      "cedar_id": "policy1"
-    },
+          ]
+        },
+        "annotation_id": null,
+        "cedar_id": "policy1"
+      }
+    ],
     "version": {
       "hash": "873ef4b7a321b86308d989432858e9c81ed47e9c98a42578ce6a3ea333594540",
       "loaded_at": "[timestamp]"

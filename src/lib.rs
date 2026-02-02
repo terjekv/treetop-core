@@ -97,8 +97,8 @@ pub use error::PolicyError;
 pub use labels::{LabelRegistry, LabelRegistryBuilder, Labeler, RegexLabeler};
 pub use loader::compile_policy;
 pub use types::{
-    Action, AttrValue, CedarType, Decision, Group, Groups, PermitPolicy, PolicyVersion, Principal,
-    Request, Resource, User, UserPolicies,
+    Action, AttrValue, CedarType, Decision, Group, Groups, PermitPolicies, PermitPolicy,
+    PolicyVersion, Principal, Request, Resource, User, UserPolicies,
 };
 
 #[cfg(feature = "observability")]

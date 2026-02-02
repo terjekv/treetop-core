@@ -4,39 +4,41 @@ expression: decision
 ---
 {
   "Allow": {
-    "policy": {
-      "literal": "permit (\n    principal == Database::User::\"alice\",\n    action in [Database::Action::\"create_table\", Database::Action::\"view_table\"],\n    resource is Database::Table\n);",
-      "json": {
-        "effect": "permit",
-        "principal": {
-          "op": "==",
-          "entity": {
-            "type": "Database::User",
-            "id": "alice"
-          }
-        },
-        "action": {
-          "op": "in",
-          "entities": [
-            {
-              "type": "Database::Action",
-              "id": "create_table"
-            },
-            {
-              "type": "Database::Action",
-              "id": "view_table"
+    "policies": [
+      {
+        "literal": "permit (\n    principal == Database::User::\"alice\",\n    action in [Database::Action::\"create_table\", Database::Action::\"view_table\"],\n    resource is Database::Table\n);",
+        "json": {
+          "effect": "permit",
+          "principal": {
+            "op": "==",
+            "entity": {
+              "type": "Database::User",
+              "id": "alice"
             }
-          ]
+          },
+          "action": {
+            "op": "in",
+            "entities": [
+              {
+                "type": "Database::Action",
+                "id": "create_table"
+              },
+              {
+                "type": "Database::Action",
+                "id": "view_table"
+              }
+            ]
+          },
+          "resource": {
+            "op": "is",
+            "entity_type": "Database::Table"
+          },
+          "conditions": []
         },
-        "resource": {
-          "op": "is",
-          "entity_type": "Database::Table"
-        },
-        "conditions": []
-      },
-      "annotation_id": null,
-      "cedar_id": "policy0"
-    },
+        "annotation_id": null,
+        "cedar_id": "policy0"
+      }
+    ],
     "version": {
       "hash": "3e08780bcab1195040be80a026ea6acec1eef12e0f5a8cca2550eb1b4bb6b5c2",
       "loaded_at": "[timestamp]"

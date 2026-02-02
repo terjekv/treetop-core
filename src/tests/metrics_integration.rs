@@ -1,6 +1,14 @@
 #![cfg(feature = "observability")]
 #![allow(dead_code, unused_imports)] // This test module is only compiled with observability feature
 
+//! Metrics integration tests
+//!
+//! These tests verify that the metrics system correctly tracks evaluation statistics,
+//! including matched policy IDs. Due to the use of a global metrics sink, these tests
+//! may interfere with each other when run concurrently.
+//!
+//! To run these tests reliably, use: `cargo test --features observability metrics_integration -- --test-threads=1`
+
 use crate::metrics::{EvaluationPhases, EvaluationStats, MetricsSink, ReloadStats};
 use crate::{Action, Decision, PolicyEngine, Principal, Request, Resource, User};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -20,6 +28,7 @@ struct TestMetricsSink {
     total_duration_micros: Arc<AtomicU64>,
     principal_ids: Arc<Mutex<Vec<String>>>,
     action_ids: Arc<Mutex<Vec<String>>>,
+    matched_policies: Arc<Mutex<Vec<Vec<String>>>>,
     phases: Arc<Mutex<Vec<EvaluationPhases>>>,
 }
 
@@ -33,6 +42,7 @@ impl TestMetricsSink {
             total_duration_micros: Arc::new(AtomicU64::new(0)),
             principal_ids: Arc::new(Mutex::new(Vec::new())),
             action_ids: Arc::new(Mutex::new(Vec::new())),
+            matched_policies: Arc::new(Mutex::new(Vec::new())),
             phases: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -55,6 +65,10 @@ impl TestMetricsSink {
 
     fn action_ids(&self) -> Vec<String> {
         self.action_ids.lock().unwrap().clone()
+    }
+
+    fn matched_policies(&self) -> Vec<Vec<String>> {
+        self.matched_policies.lock().unwrap().clone()
     }
 
     fn total_duration_ms(&self) -> f64 {
@@ -80,6 +94,9 @@ impl MetricsSink for TestMetricsSink {
         if let Ok(mut v) = self.action_ids.lock() {
             v.push(stats.action_id.clone());
         }
+        if let Ok(mut v) = self.matched_policies.lock() {
+            v.push(stats.matched_policies.clone());
+        }
         let micros = (stats.duration.as_secs_f64() * 1_000_000.0) as u64;
         self.total_duration_micros
             .fetch_add(micros, Ordering::Relaxed);
@@ -96,35 +113,17 @@ impl MetricsSink for TestMetricsSink {
     }
 }
 
-/// Helper to simulate metrics collection without relying on global set_sink.
-/// This directly calls the sink for each evaluation to test the sink behavior.
-fn collect_metrics_from_evaluations(
+/// Helper to run evaluations with the engine and let metrics be automatically collected.
+fn run_evaluations(
     engine: &PolicyEngine,
-    sink: &TestMetricsSink,
     requests: Vec<Request>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::traits::CedarAtom;
-
+) -> Result<Vec<Decision>, Box<dyn std::error::Error>> {
+    let mut results = Vec::new();
     for request in requests {
-        let principal_id = match &request.principal {
-            Principal::User(user) => user.cedar_id(),
-            _ => "Unknown".to_string(),
-        };
-        let action_id = request.action.to_string();
-
         let response = engine.evaluate(&request)?;
-
-        let allowed = matches!(response, Decision::Allow { .. });
-        let duration = Duration::from_millis(1); // Placeholder; real timing would come from engine
-
-        sink.on_evaluation(&EvaluationStats {
-            duration,
-            allowed,
-            principal_id,
-            action_id,
-        });
+        results.push(response);
     }
-    Ok(())
+    Ok(results)
 }
 
 /// Build a predefined set of test requests across various principals and actions.
@@ -168,12 +167,15 @@ fn test_metrics_integration_with_dns_policy() {
     let test_sink = TestMetricsSink::new();
     let ns = Some(vec![NAMESPACE.to_string()]);
 
+    // Set the global metrics sink
+    crate::metrics::set_sink(Arc::new(test_sink.clone()));
+
     // Build predefined test requests
     let requests = build_test_requests(&ns);
     assert_eq!(requests.len(), 9, "Should have 9 predefined requests");
 
-    // Collect metrics for all requests
-    let _ = collect_metrics_from_evaluations(&engine, &test_sink, requests);
+    // Run evaluations - metrics will be automatically collected via the global sink
+    let _ = run_evaluations(&engine, requests).expect("Evaluations should succeed");
 
     // Verify total evaluations
     assert_eq!(
@@ -183,9 +185,6 @@ fn test_metrics_integration_with_dns_policy() {
     );
 
     // Verify allow/deny split
-    // Expected: alice (admin) allows all, bob (user) allows view_host, charlie (admin) allows create/view/edit
-    // Actual allows: alice 3 (all), bob 1 (view_host), charlie 2 (create, view_host) = 6 allows
-    // But charlie has explicit deny on delete_host, and bob has deny on edit/delete = 3 denies
     assert_eq!(
         test_sink.allow_count() + test_sink.deny_count(),
         9,
@@ -257,6 +256,14 @@ fn test_metrics_integration_with_dns_policy() {
     assert_eq!(view_count, 3, "view_host should have 3 evaluations");
     assert_eq!(edit_count, 3, "edit_host should have 3 evaluations");
     assert_eq!(delete_count, 3, "delete_host should have 3 evaluations");
+
+    // Verify matched policies are tracked
+    let matched_policies = test_sink.matched_policies();
+    assert_eq!(matched_policies.len(), 9, "Should track matched policies for all 9 evaluations");
+    
+    // Count how many evaluations had at least one matched policy
+    let with_matches = matched_policies.iter().filter(|p| !p.is_empty()).count();
+    assert!(with_matches > 0, "At least some evaluations should have matched policies");
 }
 #[test]
 fn test_metrics_phase_tracking() {
@@ -336,5 +343,171 @@ fn test_metrics_phase_tracking() {
         (overhead2 - 1.0).abs() < 0.001,
         "Overhead should be ~1.0ms, got {}",
         overhead2
+    );
+}
+
+#[test]
+fn test_matched_policies_tracking() {
+    // Test that matched policy IDs are correctly tracked in metrics
+    // Note: Cedar assigns sequential IDs (policy0, policy1, etc.) internally
+    const POLICY_WITH_IDS: &str = r#"
+        @id("allow_alice_read")
+        permit (
+            principal == User::"alice",
+            action == Action::"read",
+            resource == Document::"doc1"
+        );
+        
+        @id("allow_bob_write")
+        permit (
+            principal == User::"bob",
+            action == Action::"write",
+            resource == Document::"doc2"
+        );
+        
+        @id("forbid_charlie_delete")
+        forbid (
+            principal == User::"charlie",
+            action == Action::"delete",
+            resource == Document::"doc3"
+        );
+    "#;
+
+    let engine = PolicyEngine::new_from_str(POLICY_WITH_IDS).expect("Failed to create engine");
+    let test_sink = TestMetricsSink::new();
+    
+    // Set the global metrics sink
+    crate::metrics::set_sink(Arc::new(test_sink.clone()));
+
+    // Test 1: Alice should match the first permit policy (policy0)
+    let request1 = Request {
+        principal: Principal::User(User::new("alice", None, None)),
+        action: Action::new("read", None),
+        resource: Resource::new("Document", "doc1"),
+    };
+    let result1 = engine.evaluate(&request1).expect("Evaluation should succeed");
+    assert!(matches!(result1, Decision::Allow { .. }), "Alice should be allowed to read doc1");
+
+    // Test 2: Bob should match the second permit policy (policy1)
+    let request2 = Request {
+        principal: Principal::User(User::new("bob", None, None)),
+        action: Action::new("write", None),
+        resource: Resource::new("Document", "doc2"),
+    };
+    let result2 = engine.evaluate(&request2).expect("Evaluation should succeed");
+    assert!(matches!(result2, Decision::Allow { .. }), "Bob should be allowed to write doc2");
+
+    // Test 3: Charlie should be denied by forbid policy (policy2)
+    let request3 = Request {
+        principal: Principal::User(User::new("charlie", None, None)),
+        action: Action::new("delete", None),
+        resource: Resource::new("Document", "doc3"),
+    };
+    let result3 = engine.evaluate(&request3).expect("Evaluation should succeed");
+    assert!(matches!(result3, Decision::Deny { .. }), "Charlie should be denied delete on doc3");
+
+    // Test 4: A request that matches no policies
+    let request4 = Request {
+        principal: Principal::User(User::new("david", None, None)),
+        action: Action::new("read", None),
+        resource: Resource::new("Document", "doc4"),
+    };
+    let result4 = engine.evaluate(&request4).expect("Evaluation should succeed");
+    assert!(matches!(result4, Decision::Deny { .. }), "David should be denied (no matching policy)");
+
+    // Verify matched policies
+    let matched_policies = test_sink.matched_policies();
+    assert_eq!(matched_policies.len(), 4, "Should have 4 evaluations");
+
+    // Alice's evaluation should have the annotation ID
+    assert!(
+        !matched_policies[0].is_empty(),
+        "Alice's evaluation should have at least one matched policy, got: {:?}",
+        matched_policies[0]
+    );
+    assert_eq!(
+        matched_policies[0], vec!["allow_alice_read"],
+        "Alice's matched policy should be 'allow_alice_read', got: {:?}",
+        matched_policies[0]
+    );
+
+    // Bob's evaluation should have the annotation ID
+    assert!(
+        !matched_policies[1].is_empty(),
+        "Bob's evaluation should have at least one matched policy, got: {:?}",
+        matched_policies[1]
+    );
+    assert_eq!(
+        matched_policies[1], vec!["allow_bob_write"],
+        "Bob's matched policy should be 'allow_bob_write', got: {:?}",
+        matched_policies[1]
+    );
+
+    // Charlie's evaluation should have no matched permit policies (forbid doesn't count)
+    // Forbid policies don't show up in permit_policies, only in Cedar's decision
+    assert!(
+        matched_policies[2].is_empty(),
+        "Charlie's evaluation should have no matched permit policies (forbid policy), got: {:?}",
+        matched_policies[2]
+    );
+
+    // David's evaluation should have no matched policies (deny by default)
+    assert!(
+        matched_policies[3].is_empty(),
+        "David's evaluation should have no matched policies, got: {:?}",
+        matched_policies[3]
+    );
+}
+
+#[test]
+fn test_multiple_matched_policies() {
+    // Test that when multiple policies match, all are tracked
+    // Cedar will assign these as policy0 and policy1
+    const POLICY_WITH_MULTIPLE_MATCHES: &str = r#"
+        @id("policy_1")
+        permit (
+            principal,
+            action == Action::"read",
+            resource == Document::"public"
+        );
+        
+        @id("policy_2")
+        permit (
+            principal == User::"alice",
+            action,
+            resource
+        );
+    "#;
+
+    let engine = PolicyEngine::new_from_str(POLICY_WITH_MULTIPLE_MATCHES).expect("Failed to create engine");
+    let test_sink = TestMetricsSink::new();
+    
+    // Set the global metrics sink
+    crate::metrics::set_sink(Arc::new(test_sink.clone()));
+
+    // Alice reading public document should match both policies
+    let request = Request {
+        principal: Principal::User(User::new("alice", None, None)),
+        action: Action::new("read", None),
+        resource: Resource::new("Document", "public"),
+    };
+    let result = engine.evaluate(&request).expect("Evaluation should succeed");
+    assert!(matches!(result, Decision::Allow { .. }), "Alice should be allowed");
+
+    // Verify both policies were matched
+    let matched_policies = test_sink.matched_policies();
+    assert_eq!(matched_policies.len(), 1, "Should have 1 evaluation");
+    assert_eq!(
+        matched_policies[0].len(), 2,
+        "Should have 2 matched policies, got: {:?}",
+        matched_policies[0]
+    );
+    
+    // Verify that both policies are tracked (they'll be policy0 and policy1)
+    let policy_ids = &matched_policies[0];
+    assert!(
+        policy_ids.iter().all(|id| id.starts_with("policy")),
+        "All matched policies should be Cedar policy IDs, got: {:?}",
+        policy_ids
     );
 }

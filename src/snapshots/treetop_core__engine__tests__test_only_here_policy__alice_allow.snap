@@ -4,32 +4,34 @@ expression: decision
 ---
 {
   "Allow": {
-    "policy": {
-      "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"only_here\",\n    resource\n);",
-      "json": {
-        "effect": "permit",
-        "principal": {
-          "op": "==",
-          "entity": {
-            "type": "User",
-            "id": "alice"
-          }
+    "policies": [
+      {
+        "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"only_here\",\n    resource\n);",
+        "json": {
+          "effect": "permit",
+          "principal": {
+            "op": "==",
+            "entity": {
+              "type": "User",
+              "id": "alice"
+            }
+          },
+          "action": {
+            "op": "==",
+            "entity": {
+              "type": "Action",
+              "id": "only_here"
+            }
+          },
+          "resource": {
+            "op": "All"
+          },
+          "conditions": []
         },
-        "action": {
-          "op": "==",
-          "entity": {
-            "type": "Action",
-            "id": "only_here"
-          }
-        },
-        "resource": {
-          "op": "All"
-        },
-        "conditions": []
-      },
-      "annotation_id": null,
-      "cedar_id": "policy0"
-    },
+        "annotation_id": null,
+        "cedar_id": "policy0"
+      }
+    ],
     "version": {
       "hash": "8ee801346ef35e003f5a68c2208335024adec814c18c9912f7aa483200e9b703",
       "loaded_at": "[timestamp]"

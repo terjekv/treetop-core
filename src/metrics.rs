@@ -65,6 +65,9 @@ use std::time::{Duration, SystemTime};
 /// * `duration` - Total wall-clock time for the evaluation, including
 ///   label application, entity construction, and Cedar authorization.
 /// * `allowed` - `true` if the decision was `Allow`, `false` if `Deny`.
+/// * `matched_policies` - List of policy IDs that matched during evaluation.
+///   For `Allow` decisions, this contains the IDs of permit policies that matched.
+///   For `Deny` decisions, this may contain forbid policies or be empty.
 ///
 /// # Example
 ///
@@ -79,9 +82,10 @@ use std::time::{Duration, SystemTime};
 ///     allowed: true,
 ///     principal_id: "User::alice".to_string(),
 ///     action_id: "Action::view_host".to_string(),
+///     matched_policies: vec!["policy0".to_string()],
 /// };
-/// println!("Evaluation: {:?}ms, allowed: {}, principal: {}, action: {}",
-///     stats.duration.as_millis(), stats.allowed, stats.principal_id, stats.action_id);
+/// println!("Evaluation: {:?}ms, allowed: {}, principal: {}, action: {}, policies: {:?}",
+///     stats.duration.as_millis(), stats.allowed, stats.principal_id, stats.action_id, stats.matched_policies);
 /// # }
 /// ```
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +98,8 @@ pub struct EvaluationStats {
     pub principal_id: String,
     /// Action identifier (e.g., "Action::view_host")
     pub action_id: String,
+    /// Policy IDs that matched during evaluation
+    pub matched_policies: Vec<String>,
 }
 
 /// Detailed evaluation metrics broken down by phase.
@@ -438,10 +444,12 @@ mod tests {
             allowed: true,
             principal_id: "User::test".to_string(),
             action_id: "Action::test".to_string(),
+            matched_policies: vec!["policy0".to_string()],
         };
         let json = serde_json::to_string(&stats).unwrap();
         assert!(json.contains("42") || json.contains("0.042")); // millis or seconds in JSON
         assert!(json.contains("true"));
+        assert!(json.contains("policy0"));
     }
 
     #[test]
@@ -461,6 +469,7 @@ mod tests {
             allowed: true,
             principal_id: "User::test".to_string(),
             action_id: "Action::test".to_string(),
+            matched_policies: vec![],
         };
         record_evaluation(&stats1);
 
@@ -469,6 +478,7 @@ mod tests {
             allowed: false,
             principal_id: "User::alice".to_string(),
             action_id: "Action::view".to_string(),
+            matched_policies: vec![],
         };
         record_evaluation(&stats2);
     }
@@ -487,6 +497,7 @@ mod tests {
             allowed: true,
             principal_id: "User::test".to_string(),
             action_id: "Action::test".to_string(),
+            matched_policies: vec![],
         };
         // Should not panic
         sink.on_evaluation(&stats);
@@ -503,12 +514,14 @@ mod tests {
             allowed: false,
             principal_id: "User::test".to_string(),
             action_id: "Action::test".to_string(),
+            matched_policies: vec!["policy1".to_string()],
         };
         let stats2 = stats1.clone();
         assert_eq!(stats1.duration, stats2.duration);
         assert_eq!(stats1.allowed, stats2.allowed);
         assert_eq!(stats1.principal_id, stats2.principal_id);
         assert_eq!(stats1.action_id, stats2.action_id);
+        assert_eq!(stats1.matched_policies, stats2.matched_policies);
     }
 
     #[test]
@@ -526,6 +539,7 @@ mod tests {
             allowed: true,
             principal_id: "User::test".to_string(),
             action_id: "Action::test".to_string(),
+            matched_policies: vec![],
         };
         let debug_str = format!("{:?}", stats);
         assert!(debug_str.contains("EvaluationStats"));
@@ -556,6 +570,7 @@ mod tests {
             allowed: true,
             principal_id: "User::alice".to_string(),
             action_id: "Action::read".to_string(),
+            matched_policies: vec![],
         };
         record_evaluation(&stats1);
 
@@ -568,6 +583,7 @@ mod tests {
             allowed: false,
             principal_id: "User::bob".to_string(),
             action_id: "Action::write".to_string(),
+            matched_policies: vec![],
         };
         record_evaluation(&stats2);
 

@@ -25,10 +25,12 @@ mod user_policies;
 pub use action::Action;
 pub use attr_value::AttrValue;
 pub use cedar_type::CedarType;
-pub use decision::{Decision, FromDecisionWithPolicy, PermitPolicy, PolicyVersion};
+pub use decision::{Decision, FromDecisionWithPolicy, PermitPolicies, PermitPolicy, PolicyVersion};
 pub use group::{Group, Groups};
 pub use principal::Principal;
-pub use qualified_id::{ActionId, ActionMarker, GroupId, GroupMarker, QualifiedId, UserId, UserMarker};
+pub use qualified_id::{
+    ActionId, ActionMarker, GroupId, GroupMarker, QualifiedId, UserId, UserMarker,
+};
 pub use request::Request;
 pub use resource::Resource;
 pub use user::User;

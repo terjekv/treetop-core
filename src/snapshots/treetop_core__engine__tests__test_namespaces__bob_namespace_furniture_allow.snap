@@ -4,33 +4,35 @@ expression: decision
 ---
 {
   "Allow": {
-    "policy": {
-      "literal": "permit (\n    principal in Furniture::Group::\"carpenters\",\n    action == Furniture::Action::\"create_table\",\n    resource is Furniture::Table\n);",
-      "json": {
-        "effect": "permit",
-        "principal": {
-          "op": "in",
-          "entity": {
-            "type": "Furniture::Group",
-            "id": "carpenters"
-          }
+    "policies": [
+      {
+        "literal": "permit (\n    principal in Furniture::Group::\"carpenters\",\n    action == Furniture::Action::\"create_table\",\n    resource is Furniture::Table\n);",
+        "json": {
+          "effect": "permit",
+          "principal": {
+            "op": "in",
+            "entity": {
+              "type": "Furniture::Group",
+              "id": "carpenters"
+            }
+          },
+          "action": {
+            "op": "==",
+            "entity": {
+              "type": "Furniture::Action",
+              "id": "create_table"
+            }
+          },
+          "resource": {
+            "op": "is",
+            "entity_type": "Furniture::Table"
+          },
+          "conditions": []
         },
-        "action": {
-          "op": "==",
-          "entity": {
-            "type": "Furniture::Action",
-            "id": "create_table"
-          }
-        },
-        "resource": {
-          "op": "is",
-          "entity_type": "Furniture::Table"
-        },
-        "conditions": []
-      },
-      "annotation_id": null,
-      "cedar_id": "policy2"
-    },
+        "annotation_id": null,
+        "cedar_id": "policy2"
+      }
+    ],
     "version": {
       "hash": "3e08780bcab1195040be80a026ea6acec1eef12e0f5a8cca2550eb1b4bb6b5c2",
       "loaded_at": "[timestamp]"

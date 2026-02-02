@@ -4,52 +4,54 @@ expression: decision
 ---
 {
   "Allow": {
-    "policy": {
-      "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"assign_gateway\",\n    resource is Gateway\n) when {\n    resource.id == \"mygateway\"\n};",
-      "json": {
-        "effect": "permit",
-        "principal": {
-          "op": "==",
-          "entity": {
-            "type": "User",
-            "id": "alice"
-          }
-        },
-        "action": {
-          "op": "==",
-          "entity": {
-            "type": "Action",
-            "id": "assign_gateway"
-          }
-        },
-        "resource": {
-          "op": "is",
-          "entity_type": "Gateway"
-        },
-        "conditions": [
-          {
-            "kind": "when",
-            "body": {
-              "==": {
-                "left": {
-                  ".": {
-                    "left": {
-                      "Var": "resource"
-                    },
-                    "attr": "id"
+    "policies": [
+      {
+        "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"assign_gateway\",\n    resource is Gateway\n) when {\n    resource.id == \"mygateway\"\n};",
+        "json": {
+          "effect": "permit",
+          "principal": {
+            "op": "==",
+            "entity": {
+              "type": "User",
+              "id": "alice"
+            }
+          },
+          "action": {
+            "op": "==",
+            "entity": {
+              "type": "Action",
+              "id": "assign_gateway"
+            }
+          },
+          "resource": {
+            "op": "is",
+            "entity_type": "Gateway"
+          },
+          "conditions": [
+            {
+              "kind": "when",
+              "body": {
+                "==": {
+                  "left": {
+                    ".": {
+                      "left": {
+                        "Var": "resource"
+                      },
+                      "attr": "id"
+                    }
+                  },
+                  "right": {
+                    "Value": "mygateway"
                   }
-                },
-                "right": {
-                  "Value": "mygateway"
                 }
               }
             }
-          }
-        ]
-      },
-      "annotation_id": null,
-      "cedar_id": "policy0"
-    },
+          ]
+        },
+        "annotation_id": null,
+        "cedar_id": "policy0"
+      }
+    ],
     "version": {
       "hash": "fc7246a50468ef5f93eeb9098c10506a11bb611869fc68ec3999662ce7f60080",
       "loaded_at": "[timestamp]"

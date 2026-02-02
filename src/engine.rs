@@ -11,16 +11,17 @@ use crate::labels::LabelRegistry;
 use crate::timers::PhaseTimer;
 use crate::traits::CedarAtom;
 use crate::types::{
-    Decision, FromDecisionWithPolicy, PermitPolicy, PolicyVersion, Request, UserPolicies,
+    Decision, FromDecisionWithPolicy, PermitPolicies, PermitPolicy, PolicyVersion, Request,
+    UserPolicies,
 };
 use crate::{Groups, Principal};
 use crate::{error::PolicyError, loader};
 use arc_swap::ArcSwap;
 
 use sha2::{Digest, Sha256};
+use tracing::debug;
 #[cfg(feature = "observability")]
 use tracing::info_span;
-use tracing::{debug, info, warn};
 
 #[cfg(feature = "observability")]
 use crate::metrics::{
@@ -108,33 +109,21 @@ impl PolicySnapshot {
     }
 }
 
-/// Extract the permit policy from the Cedar authorization result.
-fn extract_permit_policy<'a>(
-    snapshot: &'a PolicySnapshot,
+/// Extract all permit policies from the Cedar authorization result.
+fn extract_permit_policies(
+    snapshot: &PolicySnapshot,
     result: &cedar_policy::Response,
-) -> Option<&'a PermitPolicy> {
+) -> PermitPolicies {
     if result.decision() != cedar_policy::Decision::Allow {
-        return None;
+        return PermitPolicies::empty();
     }
 
-    // Take the first matching policy from the diagnostics
-    if let Some(reason) = result.diagnostics().reason().next() {
-        if let Some(permit_policy) = snapshot.permit_policies.get(reason) {
-            info!(
-                event = "Request",
-                phase = "PermitPolicy",
-                policy_id = permit_policy.id()
-            );
-            return Some(permit_policy);
-        } else {
-            warn!(
-                event = "Request",
-                phase = "PermitPolicy",
-                policy_id = reason.to_string()
-            );
-        }
-    }
-    None
+    result
+        .diagnostics()
+        .reason()
+        .filter_map(|reason| snapshot.permit_policies.get(reason))
+        .cloned()
+        .collect()
 }
 
 /// Iterate over groups from a request principal.
@@ -488,8 +477,8 @@ impl PolicyEngine {
             policy_loaded_at = %version.loaded_at,
         );
 
-        // Extract the permit policy from the authorization result
-        let permit_policy = extract_permit_policy(&prepared.snapshot, &result).cloned();
+        // Extract all permit policies from the authorization result
+        let permit_policies = extract_permit_policies(&prepared.snapshot, &result);
 
         // Record metrics (no-op when no sink is configured or feature disabled)
         #[cfg(feature = "observability")]
@@ -498,11 +487,15 @@ impl PolicyEngine {
             let allowed = result.decision() == cedar_policy::Decision::Allow;
             let principal_id = request.principal.to_string();
             let action_id = request.action.to_string();
+
+            let matched_policies = permit_policies.ids();
+
             let stats = EvaluationStats {
                 duration: dur,
                 allowed,
                 principal_id,
                 action_id,
+                matched_policies,
             };
 
             let phases = EvaluationPhases {
@@ -519,7 +512,7 @@ impl PolicyEngine {
 
         Ok(Decision::from_decision_with_policy(
             result.decision(),
-            permit_policy,
+            permit_policies,
             version,
         ))
     }
@@ -1580,5 +1573,49 @@ permit (
         let snapshot2 = engine.current_snapshot();
         let version2 = snapshot2.version();
         assert_ne!(version1.hash, version2.hash);
+    }
+
+    #[test]
+    fn test_multiple_policies_captured() {
+        // Test that when multiple policies match, all are captured in the Decision
+        let policies = r#"
+            permit (
+                principal,
+                action == Action::"read",
+                resource == Document::"public"
+            );
+            
+            permit (
+                principal == User::"alice",
+                action,
+                resource
+            );
+        "#;
+
+        let engine = PolicyEngine::new_from_str(policies).unwrap();
+
+        // Alice reading public document should match both policies
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("read", None),
+            resource: Resource::new("Document", "public"),
+        };
+
+        let decision = engine.evaluate(&request).unwrap();
+
+        match decision {
+            Decision::Allow { policies, .. } => {
+                assert_eq!(
+                    policies.len(),
+                    2,
+                    "Should have captured both matching policies"
+                );
+                // Both policy0 and policy1 should be present
+                let policy_ids: Vec<_> = policies.iter().map(|p| p.cedar_id.as_str()).collect();
+                assert!(policy_ids.contains(&"policy0"), "Should contain policy0");
+                assert!(policy_ids.contains(&"policy1"), "Should contain policy1");
+            }
+            Decision::Deny { .. } => panic!("Expected Allow decision"),
+        }
     }
 }

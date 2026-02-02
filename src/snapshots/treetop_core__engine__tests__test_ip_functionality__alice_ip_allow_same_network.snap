@@ -4,56 +4,58 @@ expression: decision
 ---
 {
   "Allow": {
-    "policy": {
-      "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"create_host\",\n    resource is Host\n) when {\n    resource.ip.isInRange(ip(\"192.168.0.0/24\"))\n};",
-      "json": {
-        "effect": "permit",
-        "principal": {
-          "op": "==",
-          "entity": {
-            "type": "User",
-            "id": "alice"
-          }
-        },
-        "action": {
-          "op": "==",
-          "entity": {
-            "type": "Action",
-            "id": "create_host"
-          }
-        },
-        "resource": {
-          "op": "is",
-          "entity_type": "Host"
-        },
-        "conditions": [
-          {
-            "kind": "when",
-            "body": {
-              "isInRange": [
-                {
-                  ".": {
-                    "left": {
-                      "Var": "resource"
-                    },
-                    "attr": "ip"
-                  }
-                },
-                {
-                  "ip": [
-                    {
-                      "Value": "192.168.0.0/24"
-                    }
-                  ]
-                }
-              ]
+    "policies": [
+      {
+        "literal": "permit (\n    principal == User::\"alice\",\n    action == Action::\"create_host\",\n    resource is Host\n) when {\n    resource.ip.isInRange(ip(\"192.168.0.0/24\"))\n};",
+        "json": {
+          "effect": "permit",
+          "principal": {
+            "op": "==",
+            "entity": {
+              "type": "User",
+              "id": "alice"
             }
-          }
-        ]
-      },
-      "annotation_id": null,
-      "cedar_id": "policy0"
-    },
+          },
+          "action": {
+            "op": "==",
+            "entity": {
+              "type": "Action",
+              "id": "create_host"
+            }
+          },
+          "resource": {
+            "op": "is",
+            "entity_type": "Host"
+          },
+          "conditions": [
+            {
+              "kind": "when",
+              "body": {
+                "isInRange": [
+                  {
+                    ".": {
+                      "left": {
+                        "Var": "resource"
+                      },
+                      "attr": "ip"
+                    }
+                  },
+                  {
+                    "ip": [
+                      {
+                        "Value": "192.168.0.0/24"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "annotation_id": null,
+        "cedar_id": "policy0"
+      }
+    ],
     "version": {
       "hash": "b70432e57a7a22979f36253ca672014fb2facc7933c734d82daaa2abe7b9bf1e",
       "loaded_at": "[timestamp]"

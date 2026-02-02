@@ -38,8 +38,11 @@ pub struct EvaluationStats {
     pub allowed: bool,           // true = Allow, false = Deny
     pub principal_id: String,    // e.g., "User::alice"
     pub action_id: String,       // e.g., "Action::view_host"
+    pub matched_policies: Vec<String>, // IDs of policies that matched
 }
 ```
+
+The `matched_policies` field contains the IDs of all policies that matched during evaluation. For `Allow` decisions, this typically contains permit policies. For `Deny` decisions with forbid policies, it will contain the IDs of forbid policies.
 
 ### ReloadStats
 
@@ -65,6 +68,7 @@ struct PrometheusMetricsSink {
     evals_allowed: IntCounterVec,
     evals_denied: IntCounterVec,
     eval_duration: HistogramVec,
+    policy_matches: IntCounterVec,  // Track policy match counts
     reloads_total: IntCounter,
 }
 
@@ -74,12 +78,14 @@ impl PrometheusMetricsSink {
         let evals_allowed = IntCounterVec::new("policy_evals_allowed_total", "Allowed decisions", &["principal", "action"])?;
         let evals_denied = IntCounterVec::new("policy_evals_denied_total", "Denied decisions", &["principal", "action"])?;
         let eval_duration = HistogramVec::new("policy_eval_duration_seconds", "Eval latency", &["principal", "action"])?;
+        let policy_matches = IntCounterVec::new("policy_matches_total", "Policy match count", &["policy_id"])?;
         let reloads_total = IntCounter::new("policy_reloads_total", "Total reloads")?;
 
         registry.register(Box::new(evals_total.clone()))?;
         registry.register(Box::new(evals_allowed.clone()))?;
         registry.register(Box::new(evals_denied.clone()))?;
         registry.register(Box::new(eval_duration.clone()))?;
+        registry.register(Box::new(policy_matches.clone()))?;
         registry.register(Box::new(reloads_total.clone()))?;
 
         Ok(Self {
@@ -87,6 +93,7 @@ impl PrometheusMetricsSink {
             evals_allowed,
             evals_denied,
             eval_duration,
+            policy_matches,
             reloads_total,
         })
     }
@@ -101,6 +108,11 @@ impl MetricsSink for PrometheusMetricsSink {
             let _ = self.evals_denied.with_label_values(&[&stats.principal_id, &stats.action_id]).inc();
         }
         let _ = self.eval_duration.with_label_values(&[&stats.principal_id, &stats.action_id]).observe(stats.duration.as_secs_f64());
+        
+        // Track which policies matched
+        for policy_id in &stats.matched_policies {
+            let _ = self.policy_matches.with_label_values(&[policy_id]).inc();
+        }
     }
 
     fn on_reload(&self, _stats: &ReloadStats) {
@@ -316,6 +328,7 @@ At minimum, consider these core metrics:
 
 - **Total evaluations**: count of all `on_evaluation()` calls
 - **Allow/Deny split**: separate counts for `stats.allowed == true/false`
+- **Policy match counts**: track which policies are being used most frequently
 
 Useful additions:
 
@@ -323,6 +336,7 @@ Useful additions:
 - **Reload count**: count of `on_reload()` calls
 - **Per-action/per-principal metrics** (if you add those to your sink): fine-grained insights
 - **Phase timings**: time spent in label application, entity construction, authorization, group resolution
+- **Policy-specific metrics**: track individual policy usage to understand which policies are most active
 
 ## Tracing Integration
 

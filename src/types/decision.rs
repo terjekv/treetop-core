@@ -58,6 +58,99 @@ impl PermitPolicy {
     }
 }
 
+/// A collection of permit policies with optimized access patterns.
+///
+/// This wrapper provides efficient methods for common operations like
+/// displaying policies, extracting IDs, and iterating over policies.
+///
+/// Serializes as a flat array instead of a nested object.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
+#[serde(transparent)]
+pub struct PermitPolicies(Vec<PermitPolicy>);
+
+impl PermitPolicies {
+    /// Create a new collection from a vector of policies.
+    pub fn new(policies: Vec<PermitPolicy>) -> Self {
+        Self(policies)
+    }
+
+    /// Create an empty collection.
+    pub fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Get the number of policies in this collection.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Check if the collection is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Get policy IDs as a sorted vector of strings.
+    pub fn ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.0.iter().map(|p| p.id().clone()).collect();
+        ids.sort();
+        ids
+    }
+
+    /// Get an iterator over the policies.
+    pub fn iter(&self) -> impl Iterator<Item = &PermitPolicy> {
+        self.0.iter()
+    }
+
+    /// Consume self and return the inner vector of policies.
+    pub fn into_inner(self) -> Vec<PermitPolicy> {
+        self.0
+    }
+
+    /// Get a reference to the inner vector of policies.
+    pub fn as_slice(&self) -> &[PermitPolicy] {
+        &self.0
+    }
+}
+
+impl Display for PermitPolicies {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        // Get sorted literals for consistent display
+        let mut literals: Vec<&str> = self.0.iter().map(|p| p.literal.as_str()).collect();
+        literals.sort();
+        write!(f, "{}", literals.join("; "))
+    }
+}
+
+impl IntoIterator for PermitPolicies {
+    type Item = PermitPolicy;
+    type IntoIter = std::vec::IntoIter<PermitPolicy>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a PermitPolicies {
+    type Item = &'a PermitPolicy;
+    type IntoIter = std::slice::Iter<'a, PermitPolicy>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl From<Vec<PermitPolicy>> for PermitPolicies {
+    fn from(policies: Vec<PermitPolicy>) -> Self {
+        Self::new(policies)
+    }
+}
+
+impl FromIterator<PermitPolicy> for PermitPolicies {
+    fn from_iter<I: IntoIterator<Item = PermitPolicy>>(iter: I) -> Self {
+        Self::new(iter.into_iter().collect())
+    }
+}
+
 /// Version metadata for the policy set used during an evaluation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 pub struct PolicyVersion {
@@ -77,7 +170,7 @@ impl Display for PolicyVersion {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 pub enum Decision {
     Allow {
-        policy: PermitPolicy,
+        policies: PermitPolicies,
         version: PolicyVersion,
     },
     Deny {
@@ -88,8 +181,8 @@ pub enum Decision {
 impl Display for Decision {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
-            Decision::Allow { policy, version } => {
-                write!(f, "Allow(hash={}; {})", version.hash, policy.literal)
+            Decision::Allow { policies, version } => {
+                write!(f, "Allow(hash={}; [{}])", version.hash, policies)
             }
             Decision::Deny { version } => write!(f, "Deny(hash={})", version.hash),
         }
@@ -99,7 +192,7 @@ impl Display for Decision {
 pub trait FromDecisionWithPolicy {
     fn from_decision_with_policy(
         response: cedar_policy::Decision,
-        policy: Option<PermitPolicy>,
+        policies: PermitPolicies,
         version: PolicyVersion,
     ) -> Self;
 }
@@ -107,13 +200,15 @@ pub trait FromDecisionWithPolicy {
 impl FromDecisionWithPolicy for Decision {
     fn from_decision_with_policy(
         decision: cedar_policy::Decision,
-        policy: Option<PermitPolicy>,
+        policies: PermitPolicies,
         version: PolicyVersion,
     ) -> Self {
         match decision {
             cedar_policy::Decision::Allow => {
-                let policy = policy.expect("Allow decision must have a policy");
-                Decision::Allow { policy, version }
+                if policies.is_empty() {
+                    panic!("Allow decision must have at least one policy");
+                }
+                Decision::Allow { policies, version }
             }
             cedar_policy::Decision::Deny => Decision::Deny { version },
         }
@@ -136,7 +231,7 @@ mod tests {
             loaded_at: "2023-01-01T00:00:00Z".to_string(),
         };
         let decision = Decision::Allow {
-            policy: policy.clone(),
+            policies: vec![policy.clone()].into(),
             version: version.clone(),
         };
         let display = format!("{}", decision);
@@ -182,17 +277,19 @@ mod tests {
 
         let decision = Decision::from_decision_with_policy(
             cedar_policy::Decision::Allow,
-            Some(policy.clone()),
+            vec![policy.clone()].into(),
             version.clone(),
         );
 
         match decision {
             Decision::Allow {
-                policy: p,
+                policies,
                 version: v,
             } => {
-                assert_eq!(p.literal, policy.literal);
-                assert_eq!(p.cedar_id, "policy0".to_string());
+                assert_eq!(policies.len(), 1);
+                let first_policy = policies.as_slice()[0].clone();
+                assert_eq!(first_policy.literal, policy.literal);
+                assert_eq!(first_policy.cedar_id, "policy0".to_string());
                 assert_eq!(v.hash, version.hash);
             }
             _ => panic!("Expected Allow decision"),
@@ -208,7 +305,7 @@ mod tests {
 
         let decision = Decision::from_decision_with_policy(
             cedar_policy::Decision::Deny,
-            None,
+            PermitPolicies::empty(),
             version.clone(),
         );
 
@@ -243,23 +340,31 @@ mod tests {
             loaded_at: "2023-01-01T00:00:00Z".to_string(),
         };
 
-        let decision = Decision::Allow { policy, version };
+        let decision = Decision::Allow {
+            policies: vec![policy].into(),
+            version,
+        };
         let serialized = serde_json::to_value(&decision).unwrap();
 
         // Verify that policy metadata is included in serialization
-        let policy_obj = serialized.get("Allow").and_then(|a| a.get("policy"));
-        assert!(policy_obj.is_some());
-        assert!(policy_obj.unwrap().get("cedar_id").is_some());
+        // PermitPolicies is transparent, so it serializes as a flat array
+        let allow_obj = serialized.get("Allow");
+        assert!(allow_obj.is_some());
+        let policies_arr = allow_obj.and_then(|a| a.get("policies"));
+        assert!(policies_arr.is_some());
+        assert!(policies_arr.unwrap().is_array());
 
         let deserialized: Decision = serde_json::from_value(serialized).unwrap();
 
         match deserialized {
             Decision::Allow {
                 version: v,
-                policy: p,
+                policies,
             } => {
                 assert_eq!(v.hash, "abc123");
-                assert_eq!(p.cedar_id, "policy0".to_string());
+                assert_eq!(policies.len(), 1);
+                let first_policy = policies.as_slice()[0].clone();
+                assert_eq!(first_policy.cedar_id, "policy0".to_string());
             }
             _ => panic!("Expected Allow decision"),
         }
@@ -307,5 +412,79 @@ mod tests {
             }
             _ => panic!("Expected Deny decision"),
         }
+    }
+
+    #[test]
+    fn test_permit_policies_display() {
+        let policy1 = PermitPolicy::new(
+            "permit(principal, action, resource == File::\"z.txt\");".to_string(),
+            serde_json::json!({"effect": "permit"}),
+            "policy_z".to_string(),
+        );
+        let policy2 = PermitPolicy::new(
+            "permit(principal, action, resource == File::\"a.txt\");".to_string(),
+            serde_json::json!({"effect": "permit"}),
+            "policy_a".to_string(),
+        );
+
+        // Add policies in reverse alphabetical order
+        let policies = PermitPolicies::new(vec![policy1, policy2]);
+
+        // Display should sort them alphabetically
+        let display = format!("{}", policies);
+        assert!(display.starts_with("permit(principal, action, resource == File::\"a.txt\");"));
+        assert!(display.contains("; "));
+        assert!(display.ends_with("permit(principal, action, resource == File::\"z.txt\");"));
+    }
+
+    #[test]
+    fn test_permit_policies_ids() {
+        let policy1 = PermitPolicy::new(
+            "test1".to_string(),
+            serde_json::json!({}),
+            "policy_z".to_string(),
+        );
+        let policy2 = PermitPolicy::new(
+            "test2".to_string(),
+            serde_json::json!({}),
+            "policy_a".to_string(),
+        );
+
+        // Add policies in reverse alphabetical order
+        let policies = PermitPolicies::new(vec![policy1, policy2]);
+
+        // ids() should return sorted IDs
+        let ids = policies.ids();
+        assert_eq!(ids, vec!["policy_a", "policy_z"]);
+    }
+
+    #[test]
+    fn test_permit_policies_iteration() {
+        let policy1 = PermitPolicy::new(
+            "test1".to_string(),
+            serde_json::json!({}),
+            "policy1".to_string(),
+        );
+        let policy2 = PermitPolicy::new(
+            "test2".to_string(),
+            serde_json::json!({}),
+            "policy2".to_string(),
+        );
+
+        let policies = PermitPolicies::new(vec![policy1.clone(), policy2.clone()]);
+
+        // Test reference iteration
+        let mut count = 0;
+        for policy in &policies {
+            count += 1;
+            assert!(policy.cedar_id == "policy1" || policy.cedar_id == "policy2");
+        }
+        assert_eq!(count, 2);
+
+        // Test consuming iteration
+        let collected: Vec<_> = policies.into_iter().collect();
+        assert_eq!(collected.len(), 2);
+        assert_eq!(collected[0].cedar_id, policy1.cedar_id);
+        assert_eq!(collected[1].cedar_id, policy2.cedar_id);
     }
 }

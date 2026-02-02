@@ -4,36 +4,38 @@ expression: decision
 ---
 {
   "Allow": {
-    "policy": {
-      "literal": "@id(\"DNS.users_policy\")\npermit (\n    principal in DNS::Group::\"users\",\n    action == DNS::Action::\"view_host\",\n    resource is Host\n);",
-      "json": {
-        "effect": "permit",
-        "principal": {
-          "op": "in",
-          "entity": {
-            "type": "DNS::Group",
-            "id": "users"
+    "policies": [
+      {
+        "literal": "@id(\"DNS.users_policy\")\npermit (\n    principal in DNS::Group::\"users\",\n    action == DNS::Action::\"view_host\",\n    resource is Host\n);",
+        "json": {
+          "effect": "permit",
+          "principal": {
+            "op": "in",
+            "entity": {
+              "type": "DNS::Group",
+              "id": "users"
+            }
+          },
+          "action": {
+            "op": "==",
+            "entity": {
+              "type": "DNS::Action",
+              "id": "view_host"
+            }
+          },
+          "resource": {
+            "op": "is",
+            "entity_type": "Host"
+          },
+          "conditions": [],
+          "annotations": {
+            "id": "DNS.users_policy"
           }
         },
-        "action": {
-          "op": "==",
-          "entity": {
-            "type": "DNS::Action",
-            "id": "view_host"
-          }
-        },
-        "resource": {
-          "op": "is",
-          "entity_type": "Host"
-        },
-        "conditions": [],
-        "annotations": {
-          "id": "DNS.users_policy"
-        }
-      },
-      "annotation_id": "DNS.users_policy",
-      "cedar_id": "policy2"
-    },
+        "annotation_id": "DNS.users_policy",
+        "cedar_id": "policy2"
+      }
+    ],
     "version": {
       "hash": "d7efadba123ba2cfa6cf1768a1db2a82b5a199190b1b9d344243d976e2b0f790",
       "loaded_at": "[timestamp]"
