@@ -148,8 +148,8 @@ permit (
      println!("Policy loaded at: {}", version.loaded_at);
  }
 
- // List all of alice's policies
- let policies = engine.list_policies_for_user("alice", vec![]).unwrap();
+// List all of alice's policies, assuming no groups and no namespaces
+let policies = engine.list_policies_for_user("alice", &[], &[]).unwrap();
  // This value is also seralizable to JSON
  let json = serde_json::to_string(&policies).unwrap();
 ```

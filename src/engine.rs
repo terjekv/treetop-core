@@ -547,10 +547,10 @@ impl PolicyEngine {
     ///
     /// let engine = PolicyEngine::new_from_str(policies).unwrap();
     ///
-    /// let user_policies = engine.list_policies("alice", &["admins"], &[]).unwrap();
+    /// let user_policies = engine.list_policies_for_user("alice", &["admins"], &[]).unwrap();
     /// assert_eq!(user_policies.policies().len(), 2); // Both policies match
     /// ```
-    pub fn list_policies(
+    pub fn list_policies_for_user(
         &self,
         user: &str,
         groups: &[&str],
@@ -602,27 +602,6 @@ impl PolicyEngine {
         }
 
         Ok(UserPolicies::new(user, &matching_policies))
-    }
-
-    /// List policies for a user (legacy API).
-    ///
-    /// This is a convenience method that simply delegates to `list_policies()`.
-    ///
-    /// # Arguments
-    ///
-    /// * `user` - The user's ID (without namespace qualification)
-    /// * `namespace` - Optional namespace path for the user and groups (ignored, use list_policies instead)
-    #[deprecated(
-        since = "0.0.14",
-        note = "use `list_policies(user, groups, namespace)` instead"
-    )]
-    pub fn list_policies_for_user(
-        &self,
-        user: &str,
-        namespace: Vec<String>,
-    ) -> Result<UserPolicies, PolicyError> {
-        let namespace_slice: Vec<&str> = namespace.iter().map(|s| s.as_str()).collect();
-        self.list_policies(user, &[], &namespace_slice)
     }
 
     pub fn policies(&self) -> Result<Vec<Policy>, PolicyError> {
@@ -890,7 +869,7 @@ permit (
 
         let group_strs: Vec<&str> = groups.iter().map(|s| s.as_str()).collect();
         let user_policies = engine
-            .list_policies(user, &group_strs, &[])
+            .list_policies_for_user(user, &group_strs, &[])
             .expect("Failed to list permissions");
         assert_eq!(user_policies.policies().len(), expected_policies);
 
@@ -913,7 +892,7 @@ permit (
         let combined = TEST_PERMISSION_POLICY.to_string() + TEST_POLICY_WITH_CONTEXT;
         let engine = PolicyEngine::new_from_str(&combined).unwrap();
 
-        let perms = engine.list_policies("alice", &[], &[]).unwrap();
+        let perms = engine.list_policies_for_user("alice", &[], &[]).unwrap();
 
         let expected_serialized = r#"{"user":"alice","policies":[{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"in","entities":[{"type":"Action","id":"view"},{"type":"Action","id":"edit"},{"type":"Action","id":"delete"}]},"resource":{"op":"==","entity":{"type":"Photo","id":"VacationPhoto94.jpg"}},"conditions":[]},{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"==","entity":{"type":"Action","id":"create_host"}},"resource":{"op":"is","entity_type":"Host"},"conditions":[]},{"effect":"permit","principal":{"op":"==","entity":{"type":"User","id":"alice"}},"action":{"op":"==","entity":{"type":"Action","id":"create_host"}},"resource":{"op":"is","entity_type":"Host"},"conditions":[{"kind":"when","body":{"&&":{"left":{"like":{"left":{".":{"left":{"Var":"resource"},"attr":"name"}},"pattern":[{"Literal":"w"},{"Literal":"e"},{"Literal":"b"},"Wildcard"]}},"right":{"isInRange":[{".":{"left":{"Var":"resource"},"attr":"ip"}},{"ip":[{"Value":"192.0.1.0/24"}]}]}}}}]}]}"#;
 
@@ -951,7 +930,7 @@ permit (
 
         let group_strs: Vec<&str> = groups.iter().map(|s| s.as_str()).collect();
         let user_policies = engine
-            .list_policies(user, &group_strs, &[])
+            .list_policies_for_user(user, &group_strs, &[])
             .expect("Failed to list policies");
         assert_eq!(
             user_policies.policies().len(),
@@ -982,7 +961,7 @@ permit (
 
         // Test Database::User::"alice" with Database::Group::"dbusers"
         let user_policies = engine
-            .list_policies("alice", &["dbusers"], &["Database"])
+            .list_policies_for_user("alice", &["dbusers"], &["Database"])
             .expect("Failed to list policies");
 
         // Should match both:
@@ -997,7 +976,7 @@ permit (
 
         // Test Furniture::Group::"carpenters"
         let user_policies = engine
-            .list_policies("carpenter_user", &["carpenters"], &["Furniture"])
+            .list_policies_for_user("carpenter_user", &["carpenters"], &["Furniture"])
             .expect("Failed to list policies");
 
         // Should match principal in Furniture::Group::"carpenters"
@@ -1016,7 +995,7 @@ permit (
         let engine = PolicyEngine::new_from_str(policy_with_unconstrained_principal).unwrap();
 
         let user_policies = engine
-            .list_policies("anyone", &[], &[])
+            .list_policies_for_user("anyone", &[], &[])
             .expect("Failed to list policies");
 
         // The policy has unconstrained principal, so it should match any user
@@ -1028,7 +1007,7 @@ permit (
         let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
 
         let user_policies = engine
-            .list_policies("charlie", &[], &[])
+            .list_policies_for_user("charlie", &[], &[])
             .expect("Failed to list policies");
 
         // charlie is not mentioned in the policies
@@ -1036,12 +1015,12 @@ permit (
     }
 
     #[test]
-    fn test_list_policies_for_user_legacy_api() {
-        // Test that the deprecated list_policies_for_user still works
+    fn test_list_policies_basic() {
+        // Basic list_policies_for_user usage
         let engine = PolicyEngine::new_from_str(TEST_PERMISSION_POLICY).unwrap();
 
         let user_policies = engine
-            .list_policies("alice", &[], &[])
+            .list_policies_for_user("alice", &[], &[])
             .expect("Failed to list permissions");
 
         // Should have 2 policies for alice (one with exact match, one with generic action)
@@ -1049,12 +1028,12 @@ permit (
     }
 
     #[test]
-    fn test_list_policies_for_user_legacy_with_groups_and_namespace() {
-        // Test that the new API supports groups and namespaces
+    fn test_list_policies_for_user_with_groups_and_namespace() {
+        // Test that the API supports groups and namespaces
         let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_NAMESPACES).unwrap();
 
         let user_policies = engine
-            .list_policies("alice", &["dbusers"], &["Database"])
+            .list_policies_for_user("alice", &["dbusers"], &["Database"])
             .expect("Failed to list permissions");
 
         // Should match both the direct user constraint and the group constraint

@@ -55,7 +55,7 @@
 //! assert!(matches!(decision, Decision::Allow { .. }));
 //!
 //! // List all of alice's policies
-//! let alice_policies = engine.list_policies_for_user("alice", vec![]).unwrap();
+//! let alice_policies = engine.list_policies_for_user("alice", &[], &[]).unwrap();
 //! // This value is also seralizable to JSON
 //! let json = serde_json::to_string(&alice_policies).unwrap();
 //!

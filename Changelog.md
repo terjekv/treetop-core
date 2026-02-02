@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.15] - 2026-02-02
+
+### Added
+
+- `matched_policies` in `EvaluationStats` to capture matched permit policy IDs
+- `serial_test` dev dependency for serializing metrics-related tests
+
+### Changed
+
+- **BREAKING**: `list_policies_for_user()` signature changed to accept `groups` and `namespace` parameters
+  - Old: `list_policies_for_user(user, namespace)`
+  - New: `list_policies_for_user(user, groups, namespace)`
+- Prometheus sink example updated for the new `matched_policies` field
+- Metrics integration tests made serial (including DNS test evaluations) to avoid global sink interference
+
 ## [0.0.14] - 2026-02-01
 
 ### Changed
