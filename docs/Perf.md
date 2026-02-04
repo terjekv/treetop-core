@@ -87,6 +87,14 @@ Workflow: `.github/workflows/perf.yml`
   - runs base as saved baseline (`--save-baseline base`)
   - runs head against that baseline (`--baseline base`)
   - executes with observability on/off matrix
+  - posts a PR comment with a short summary and output tail for each matrix variant
+
+## Recommended Repo Workflow
+
+- Protect `main` and require pull requests for changes.
+- Require Perf workflow checks to pass before merge.
+- Use PR-to-`main` as the primary performance regression gate.
+- Keep direct pushes to `main` disabled except for maintainers/emergency flow.
 
 ## Tuning Guidance
 
