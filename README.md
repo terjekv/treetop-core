@@ -28,6 +28,7 @@ Treetop includes optional metrics and tracing to help you observe policy evaluat
 - **Prometheus example:** See [examples/prometheus_sink.rs](examples/prometheus_sink.rs).
 - **OpenTelemetry example:** See [examples/opentelemetry_tracing.rs](examples/opentelemetry_tracing.rs).
 - **Documentation:** See [docs/Metrics.md](docs/Metrics.md).
+- **Performance benchmarks:** See [docs/Perf.md](docs/Perf.md).
 
 Enable in your crate:
 

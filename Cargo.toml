@@ -50,6 +50,8 @@ default = []
 observability = []
 
 [dev-dependencies]
+criterion = "0.8"
+iai-callgrind = "0.16"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 serial_test = "3"
 
@@ -60,3 +62,11 @@ required-features = ["observability"]
 [[example]]
 name = "opentelemetry_tracing"
 required-features = ["observability"]
+
+[[bench]]
+name = "evaluate_criterion"
+harness = false
+
+[[bench]]
+name = "evaluate_iai"
+harness = false

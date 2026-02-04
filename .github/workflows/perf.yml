@@ -1,0 +1,170 @@
+name: Perf
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+  PERF_MAX_REGRESSION_PCT: "8"
+
+jobs:
+  criterion-regression:
+    name: Criterion Regression (observability=${{ matrix.observability }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        observability: [false, true]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          shared-key: perf-criterion-${{ matrix.observability }}
+
+      - name: Resolve base SHA
+        id: base
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+            if [[ -z "$BASE_SHA" || "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+              BASE_SHA="$(git rev-parse HEAD^)"
+            fi
+          fi
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Create baseline worktree
+        shell: bash
+        run: |
+          git worktree add /tmp/treetop-base "${{ steps.base.outputs.base_sha }}"
+
+      - name: Benchmark baseline (criterion)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.observability }}" == "true" ]]; then
+            FEATURES="--features observability"
+            SUFFIX="obs"
+          else
+            FEATURES=""
+            SUFFIX="noobs"
+          fi
+
+          export CARGO_TARGET_DIR="/tmp/criterion-base-${SUFFIX}"
+          cd /tmp/treetop-base
+          cargo bench --bench evaluate_criterion $FEATURES -- --noplot
+
+      - name: Benchmark head (criterion)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.observability }}" == "true" ]]; then
+            FEATURES="--features observability"
+            SUFFIX="obs"
+          else
+            FEATURES=""
+            SUFFIX="noobs"
+          fi
+
+          export CARGO_TARGET_DIR="/tmp/criterion-head-${SUFFIX}"
+          cargo bench --bench evaluate_criterion $FEATURES -- --noplot
+
+      - name: Compare criterion results
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.observability }}" == "true" ]]; then
+            SUFFIX="obs"
+          else
+            SUFFIX="noobs"
+          fi
+
+          python3 scripts/perf/compare_criterion.py \
+            "/tmp/criterion-base-${SUFFIX}" \
+            "/tmp/criterion-head-${SUFFIX}" \
+            "$PERF_MAX_REGRESSION_PCT"
+
+  iai-callgrind-regression:
+    name: iai-callgrind Regression (observability=${{ matrix.observability }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        observability: [false, true]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
+      - name: Install cargo-iai-callgrind
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-iai-callgrind
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          shared-key: perf-iai-${{ matrix.observability }}
+
+      - name: Resolve base SHA
+        id: base
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+            if [[ -z "$BASE_SHA" || "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+              BASE_SHA="$(git rev-parse HEAD^)"
+            fi
+          fi
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Create baseline worktree
+        shell: bash
+        run: |
+          git worktree add /tmp/treetop-base-iai "${{ steps.base.outputs.base_sha }}"
+
+      - name: Benchmark baseline + compare (iai-callgrind)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.observability }}" == "true" ]]; then
+            FEATURES="--features observability"
+            SUFFIX="obs"
+          else
+            FEATURES=""
+            SUFFIX="noobs"
+          fi
+
+          export CARGO_TARGET_DIR="/tmp/iai-${SUFFIX}"
+
+          cd /tmp/treetop-base-iai
+          cargo iai-callgrind bench --bench evaluate_iai $FEATURES --save-baseline base
+
+          cd "$GITHUB_WORKSPACE"
+          cargo iai-callgrind bench --bench evaluate_iai $FEATURES --baseline base
