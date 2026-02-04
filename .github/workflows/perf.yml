@@ -65,7 +65,7 @@ jobs:
             SUFFIX="obs"
           else
             FEATURES=""
-            SUFFIX="noobs"
+            SUFFIX="no-obs"
           fi
 
           export CARGO_TARGET_DIR="/tmp/criterion-base-${SUFFIX}"
@@ -81,7 +81,7 @@ jobs:
             SUFFIX="obs"
           else
             FEATURES=""
-            SUFFIX="noobs"
+            SUFFIX="no-obs"
           fi
 
           export CARGO_TARGET_DIR="/tmp/criterion-head-${SUFFIX}"
@@ -94,7 +94,7 @@ jobs:
           if [[ "${{ matrix.observability }}" == "true" ]]; then
             SUFFIX="obs"
           else
-            SUFFIX="noobs"
+            SUFFIX="no-obs"
           fi
 
           python3 scripts/perf/compare_criterion.py \
@@ -162,7 +162,7 @@ jobs:
             SUFFIX="obs"
           else
             FEATURES=""
-            SUFFIX="noobs"
+            SUFFIX="no-obs"
           fi
 
           export CARGO_TARGET_DIR="/tmp/iai-${SUFFIX}"
@@ -188,7 +188,7 @@ jobs:
           if [[ "${{ matrix.observability }}" == "true" ]]; then
             SUFFIX="obs"
           else
-            SUFFIX="noobs"
+            SUFFIX="no-obs"
           fi
 
           REPORT="/tmp/iai-${SUFFIX}.txt"

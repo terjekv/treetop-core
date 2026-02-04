@@ -69,7 +69,7 @@ python3 scripts/perf/compare_criterion.py <base_target_dir> <head_target_dir> <m
 Example:
 
 ```bash
-python3 scripts/perf/compare_criterion.py /tmp/criterion-base-noobs /tmp/criterion-head-noobs 8
+python3 scripts/perf/compare_criterion.py /tmp/criterion-base-no-obs /tmp/criterion-head-no-obs 8
 ```
 
 The script exits non-zero if any scenario regresses more than the threshold.
