@@ -156,7 +156,6 @@ jobs:
         id: iai
         shell: bash
         run: |
-          set -euo pipefail
           if [[ "${{ matrix.observability }}" == "true" ]]; then
             FEATURES="--features observability"
             SUFFIX="obs"
@@ -168,9 +167,28 @@ jobs:
           export CARGO_TARGET_DIR="/tmp/iai-${SUFFIX}"
           export CARGO_INCREMENTAL=0
 
-          cd /tmp/treetop-base-iai
-          cargo bench --bench evaluate_iai $FEATURES -- --save-baseline base 2>&1 | head -20
+          REPORT="/tmp/iai-${SUFFIX}.txt"
+          BASELINE_LOG="/tmp/iai-${SUFFIX}-baseline.log"
+          HEAD_LOG="/tmp/iai-${SUFFIX}-head.log"
 
+          cd /tmp/treetop-base-iai
+          set +e
+          cargo bench --bench evaluate_iai $FEATURES -- --save-baseline base 2>&1 | tee "$BASELINE_LOG"
+          baseline_status="${PIPESTATUS[0]}"
+          set -e
+
+          if [[ "$baseline_status" -ne 0 ]]; then
+            {
+              echo "Baseline failed: $baseline_status"
+              echo
+              echo "=== Baseline last 200 lines ==="
+              tail -n 200 "$BASELINE_LOG"
+            } > "$REPORT"
+            echo "status=$baseline_status" >> "$GITHUB_OUTPUT"
+            echo "report=$REPORT" >> "$GITHUB_OUTPUT"
+            exit "$baseline_status"
+          fi
+          
           cd "$GITHUB_WORKSPACE"
           set +e
           {
