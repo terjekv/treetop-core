@@ -200,9 +200,7 @@ jobs:
             echo "### iai-callgrind (${SUFFIX})"
             echo
             if [[ -f "$REPORT" ]]; then
-              grep "Iai-Callgrind result:" "$REPORT" || echo "Result summary was not found in output."
-              echo
-              echo "<details><summary>Last 80 lines</summary>"
+              echo "<details><summary>Results</summary>"
               echo
               echo '```text'
                cat "$REPORT"
