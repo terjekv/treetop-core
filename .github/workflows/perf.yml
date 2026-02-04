@@ -166,15 +166,25 @@ jobs:
           fi
 
           export CARGO_TARGET_DIR="/tmp/iai-${SUFFIX}"
+          export CARGO_INCREMENTAL=0
 
           cd /tmp/treetop-base-iai
-          cargo bench --bench evaluate_iai $FEATURES -- --save-baseline base
+          cargo bench --bench evaluate_iai $FEATURES -- --save-baseline base 2>&1 | head -20
 
           cd "$GITHUB_WORKSPACE"
           set +e
-          cargo bench --bench evaluate_iai $FEATURES -- --baseline base 2>&1 | tee "/tmp/iai-${SUFFIX}.txt"
+          {
+            cargo bench --bench evaluate_iai $FEATURES -- --baseline base
+            echo "Exit code: $?"
+          } 2>&1 | tee "/tmp/iai-${SUFFIX}.txt"
           status="${PIPESTATUS[0]}"
           set -e
+          
+          # Also capture any iai result files
+          if [[ -d "/tmp/iai-${SUFFIX}/iai" ]]; then
+            find "/tmp/iai-${SUFFIX}/iai" -type f -exec cat {} \; >> "/tmp/iai-${SUFFIX}.txt" 2>/dev/null || true
+          fi
+          
           echo "status=$status" >> "$GITHUB_OUTPUT"
           echo "report=/tmp/iai-${SUFFIX}.txt" >> "$GITHUB_OUTPUT"
           exit "$status"
