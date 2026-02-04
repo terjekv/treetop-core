@@ -39,17 +39,24 @@ cargo bench --bench evaluate_criterion --features observability -- --noplot
 Requires:
 
 - `valgrind`
-- `cargo-iai-callgrind` (install with `cargo install cargo-iai-callgrind`)
+- `iai-callgrind-runner` (install with `cargo install --locked iai-callgrind-runner`)
+
+> Note: `iai-callgrind-runner` is Linux only because it depends on Valgrind/Callgrind.
 
 ```bash
-cargo iai-callgrind bench --bench evaluate_iai
+cargo bench --bench evaluate_iai
 ```
 
 ### iai-callgrind (observability enabled)
 
 ```bash
-cargo iai-callgrind bench --bench evaluate_iai --features observability
+cargo bench --bench evaluate_iai --features observability
 ```
+
+### Recommended local workflow by platform
+
+- **macOS:** Run Criterion locally (`cargo bench --bench evaluate_criterion ...`) and use CI for `iai-callgrind`.
+- **Linux:** Run both Criterion and `iai-callgrind` locally.
 
 ## Criterion Regression Compare
 
