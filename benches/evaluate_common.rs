@@ -147,7 +147,7 @@ pub fn build_scenario(spec: ScenarioSpec) -> Scenario {
     }
 }
 
-pub fn wide_matrix_specs() -> Vec<ScenarioSpec> {
+fn wide_matrix_specs_all() -> Vec<ScenarioSpec> {
     vec![
         ScenarioSpec {
             name: "s_small_allow",
@@ -248,7 +248,52 @@ pub fn wide_matrix_specs() -> Vec<ScenarioSpec> {
     ]
 }
 
-pub fn iai_matrix_specs() -> Vec<ScenarioSpec> {
+pub fn wide_matrix_specs() -> Vec<ScenarioSpec> {
+    wide_matrix_specs_all()
+}
+
+pub fn wide_matrix_specs_baseline() -> Vec<ScenarioSpec> {
+    wide_matrix_specs_all()
+        .into_iter()
+        .filter(|spec| {
+            matches!(
+                spec.name,
+                "s_small_allow" | "s_small_deny" | "m_medium_allow" | "l_large_allow"
+            )
+        })
+        .collect()
+}
+
+pub fn wide_matrix_specs_groups() -> Vec<ScenarioSpec> {
+    wide_matrix_specs_all()
+        .into_iter()
+        .filter(|spec| matches!(spec.name, "m_groups_10" | "m_groups_40"))
+        .collect()
+}
+
+pub fn wide_matrix_specs_labels() -> Vec<ScenarioSpec> {
+    wide_matrix_specs_all()
+        .into_iter()
+        .filter(|spec| {
+            matches!(
+                spec.name,
+                "m_labels_5"
+                    | "m_labels_20"
+                    | "m_labels_20_groups_20"
+                    | "l_labels_20_groups_40"
+            )
+        })
+        .collect()
+}
+
+pub fn wide_matrix_specs_namespaced() -> Vec<ScenarioSpec> {
+    wide_matrix_specs_all()
+        .into_iter()
+        .filter(|spec| matches!(spec.name, "m_namespaced_depth_2" | "m_namespaced_depth_4_deny"))
+        .collect()
+}
+
+fn iai_matrix_specs_all() -> Vec<ScenarioSpec> {
     vec![
         ScenarioSpec {
             name: "iai_small_allow",
@@ -315,4 +360,41 @@ pub fn iai_matrix_specs() -> Vec<ScenarioSpec> {
             namespace_depth: 4,
         },
     ]
+}
+
+pub fn iai_matrix_specs() -> Vec<ScenarioSpec> {
+    iai_matrix_specs_all()
+}
+
+pub fn iai_matrix_specs_baseline() -> Vec<ScenarioSpec> {
+    iai_matrix_specs_all()
+        .into_iter()
+        .filter(|spec| {
+            matches!(
+                spec.name,
+                "iai_small_allow" | "iai_small_deny" | "iai_medium" | "iai_large"
+            )
+        })
+        .collect()
+}
+
+pub fn iai_matrix_specs_groups() -> Vec<ScenarioSpec> {
+    iai_matrix_specs_all()
+        .into_iter()
+        .filter(|spec| matches!(spec.name, "iai_groups_40"))
+        .collect()
+}
+
+pub fn iai_matrix_specs_labels() -> Vec<ScenarioSpec> {
+    iai_matrix_specs_all()
+        .into_iter()
+        .filter(|spec| matches!(spec.name, "iai_labels_20" | "iai_labels_20_groups_20"))
+        .collect()
+}
+
+pub fn iai_matrix_specs_namespaced() -> Vec<ScenarioSpec> {
+    iai_matrix_specs_all()
+        .into_iter()
+        .filter(|spec| matches!(spec.name, "iai_namespaced_depth_4_deny"))
+        .collect()
 }

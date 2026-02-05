@@ -64,9 +64,33 @@ name = "opentelemetry_tracing"
 required-features = ["observability"]
 
 [[bench]]
-name = "evaluate_criterion"
+name = "evaluate_criterion_baseline"
 harness = false
 
 [[bench]]
-name = "evaluate_iai"
+name = "evaluate_criterion_groups"
+harness = false
+
+[[bench]]
+name = "evaluate_criterion_labels"
+harness = false
+
+[[bench]]
+name = "evaluate_criterion_namespaced"
+harness = false
+
+[[bench]]
+name = "evaluate_iai_baseline"
+harness = false
+
+[[bench]]
+name = "evaluate_iai_groups"
+harness = false
+
+[[bench]]
+name = "evaluate_iai_labels"
+harness = false
+
+[[bench]]
+name = "evaluate_iai_namespaced"
 harness = false
