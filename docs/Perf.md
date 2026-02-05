@@ -17,21 +17,43 @@ Both are configured with a scenario matrix that stresses key dimensions:
 ## Bench Files
 
 - `benches/evaluate_common.rs` - shared scenario matrix + fixture builder
-- `benches/evaluate_criterion.rs` - Criterion benchmark entrypoint
-- `benches/evaluate_iai.rs` - iai-callgrind benchmark entrypoint
+- `benches/evaluate_criterion_baseline.rs` - Criterion baseline scenarios
+- `benches/evaluate_criterion_groups.rs` - Criterion group-heavy scenarios
+- `benches/evaluate_criterion_labels.rs` - Criterion label-heavy scenarios
+- `benches/evaluate_criterion_namespaced.rs` - Criterion namespaced scenarios
+- `benches/evaluate_iai_baseline.rs` - iai-callgrind baseline scenarios
+- `benches/evaluate_iai_groups.rs` - iai-callgrind group-heavy scenarios
+- `benches/evaluate_iai_labels.rs` - iai-callgrind label-heavy scenarios
+- `benches/evaluate_iai_namespaced.rs` - iai-callgrind namespaced scenarios
 
 ## Run Locally
+
+### All benchmarks (everything)
+
+```bash
+cargo bench
+```
+
+With observability enabled:
+
+```bash
+cargo bench --features observability
+```
+
+> Note: `iai-callgrind` requires Linux + Valgrind. On macOS, prefer running Criterion benches and use CI for `iai-callgrind`.
 
 ### Criterion (default features)
 
 ```bash
-cargo bench --bench evaluate_criterion -- --noplot
+cargo bench --bench evaluate_criterion_baseline -- --noplot
 ```
+
+Replace `evaluate_criterion_baseline` with `evaluate_criterion_groups`, `evaluate_criterion_labels`, or `evaluate_criterion_namespaced` to run those slices.
 
 ### Criterion (observability enabled)
 
 ```bash
-cargo bench --bench evaluate_criterion --features observability -- --noplot
+cargo bench --bench evaluate_criterion_baseline --features observability -- --noplot
 ```
 
 ### iai-callgrind (default features)
@@ -44,18 +66,20 @@ Requires:
 > Note: `iai-callgrind-runner` is Linux only because it depends on Valgrind/Callgrind.
 
 ```bash
-cargo bench --bench evaluate_iai
+cargo bench --bench evaluate_iai_baseline
 ```
+
+Replace `evaluate_iai_baseline` with `evaluate_iai_groups`, `evaluate_iai_labels`, or `evaluate_iai_namespaced` to run those slices.
 
 ### iai-callgrind (observability enabled)
 
 ```bash
-cargo bench --bench evaluate_iai --features observability
+cargo bench --bench evaluate_iai_baseline --features observability
 ```
 
 ### Recommended local workflow by platform
 
-- **macOS:** Run Criterion locally (`cargo bench --bench evaluate_criterion ...`) and use CI for `iai-callgrind`.
+- **macOS:** Run Criterion locally (`cargo bench --bench evaluate_criterion_baseline ...`) and use CI for `iai-callgrind`.
 - **Linux:** Run both Criterion and `iai-callgrind` locally.
 
 ## Criterion Regression Compare
@@ -80,7 +104,7 @@ Workflow: `.github/workflows/perf.yml`
 
 - **criterion-regression** (gating):
   - checks out base commit in a worktree
-  - runs `evaluate_criterion` on base and head
+  - runs `evaluate_criterion_*` benches on base and head
   - compares means using `scripts/perf/compare_criterion.py`
   - fails if any scenario exceeds `PERF_MAX_REGRESSION_PCT` (default `8`)
 - **iai-callgrind-regression**:

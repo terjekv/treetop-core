@@ -14,7 +14,12 @@ jobs:
     uses: terjekv/github-action-iai-callgrind/.github/workflows/iai-callgrind-pr-bench.yml@v1
     with:
       benchmarks_json: >-
-        ["evaluate_iai"]
+        [
+          "evaluate_iai_baseline",
+          "evaluate_iai_groups",
+          "evaluate_iai_labels",
+          "evaluate_iai_namespaced"
+        ]
       feature_sets_json: >-
         [
           {"name":"no-obs","features":""},
