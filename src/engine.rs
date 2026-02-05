@@ -1,6 +1,5 @@
 use cedar_policy::{
-    Authorizer, Entities, Entity, EntityUid, Policy, PolicyId, PolicySet, PrincipalConstraint,
-    Request as CedarRequest,
+    Authorizer, Entities, Entity, Policy, PolicyId, PolicySet, Request as CedarRequest,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -8,14 +7,16 @@ use std::time::{Duration, Instant, SystemTime};
 use std::vec;
 
 use crate::labels::LabelRegistry;
+use crate::policy_match::{matches_effect, principal_match_reason, resource_match_reason};
+use crate::query::{PrincipalQuery, ResourceQuery};
 use crate::timers::PhaseTimer;
 use crate::traits::CedarAtom;
 use crate::types::{
-    Decision, FromDecisionWithPolicy, PermitPolicies, PermitPolicy, PolicyVersion, Request,
-    UserPolicies,
+    Decision, FromDecisionWithPolicy, PermitPolicies, PermitPolicy, PolicyEffectFilter,
+    PolicyMatchReason, PolicyVersion, Request, Resource, UserPolicies,
 };
-use crate::{Groups, Principal};
 use crate::{error::PolicyError, loader};
+use crate::{Groups, Principal};
 use arc_swap::ArcSwap;
 
 use sha2::{Digest, Sha256};
@@ -25,7 +26,7 @@ use tracing::info_span;
 
 #[cfg(feature = "observability")]
 use crate::metrics::{
-    EvaluationPhases, EvaluationStats, record_evaluation, record_evaluation_phases, record_reload,
+    record_evaluation, record_evaluation_phases, record_reload, EvaluationPhases, EvaluationStats,
 };
 
 /// Aggregates timing information for all evaluation phases.
@@ -519,21 +520,33 @@ impl PolicyEngine {
 
     /// List all policies applicable to a user.
     ///
-    /// Returns policies that match any of the following conditions:
-    /// - Explicitly target the user (`principal == User::"alice"`)
-    /// - Target any of the user's groups (`principal in Group::"admins"`)
-    /// - Are unconstrained by principal (`principal`)
+    /// This mirrors [`PolicyEngine::evaluate`] input shape for principal identity:
+    /// user id + groups + shared namespace.
+    ///
+    /// Matching includes all Cedar principal-constraint forms:
+    /// - `principal == User::"..."`
+    /// - `principal in Group::"..."`
+    /// - `principal`
+    /// - `principal is User`
+    /// - `principal is User in Group::"..."`
+    ///
+    /// Resource constraints are not applied in this method. To additionally
+    /// filter by policy resource constraints, use
+    /// [`PolicyEngine::list_policies_for_user_with_resource`].
+    ///
+    /// Output is deterministic: policies are sorted by Cedar policy ID.
+    /// Each returned policy includes match reasons via `UserPolicies::matches()`.
     ///
     /// # Arguments
     ///
-    /// * `user` - The user's ID
-    /// * `groups` - Groups the user belongs to
-    /// * `namespace` - Optional namespace path for the user and groups
+    /// * `user` - User ID
+    /// * `groups` - Group IDs the user belongs to
+    /// * `namespace` - Optional shared namespace path for both user and groups
     ///
     /// # Returns
     ///
-    /// * `Ok(UserPolicies)` - A collection of policies applicable to the user
-    /// * `Err(PolicyError)` - If there's an error parsing entities or evaluating principals
+    /// * `Ok(UserPolicies)` - Matching policies and match metadata
+    /// * `Err(PolicyError)` - If entity UID construction fails
     ///
     /// # Examples
     ///
@@ -546,9 +559,10 @@ impl PolicyEngine {
     /// "#;
     ///
     /// let engine = PolicyEngine::new_from_str(policies).unwrap();
-    ///
     /// let user_policies = engine.list_policies_for_user("alice", &["admins"], &[]).unwrap();
-    /// assert_eq!(user_policies.policies().len(), 2); // Both policies match
+    ///
+    /// assert_eq!(user_policies.policies().len(), 2);
+    /// assert!(!user_policies.matches().is_empty());
     /// ```
     pub fn list_policies_for_user(
         &self,
@@ -556,52 +570,180 @@ impl PolicyEngine {
         groups: &[&str],
         namespace: &[&str],
     ) -> Result<UserPolicies, PolicyError> {
+        self.list_policies_for_user_with_resource_and_effect(
+            user,
+            groups,
+            namespace,
+            None,
+            PolicyEffectFilter::Any,
+        )
+    }
+
+    /// List all policies applicable to a concrete request.
+    ///
+    /// This mirrors [`PolicyEngine::evaluate`] by accepting `&Request` and uses:
+    /// - the request principal (including user group membership, if any)
+    /// - the request resource
+    ///
+    /// Effect filter defaults to `Any`; to filter by permit/forbid, use
+    /// [`PolicyEngine::list_policies_with_effect`].
+    pub fn list_policies(
+        &self,
+        request: &Request,
+    ) -> Result<UserPolicies, PolicyError> {
+        self.list_policies_with_effect(request, PolicyEffectFilter::Any)
+    }
+
+    /// List all policies applicable to a concrete request, with effect filtering.
+    pub fn list_policies_with_effect(
+        &self,
+        request: &Request,
+        effect_filter: PolicyEffectFilter,
+    ) -> Result<UserPolicies, PolicyError> {
+        let principal = PrincipalQuery::from_principal(&request.principal)?;
+        self.list_policies_dispatch(
+            &request.principal.to_string(),
+            &principal,
+            Some(&request.resource),
+            effect_filter,
+        )
+    }
+
+    /// List all policies applicable to a user, optionally filtering by resource constraints.
+    ///
+    /// This variant applies both principal and resource constraints:
+    /// - principal constraints as described in [`PolicyEngine::list_policies_for_user`]
+    /// - resource constraints (`==`, `in`, `is`, `is in`, `any`) when `resource` is provided
+    ///
+    /// When `resource` is `None`, behavior is equivalent to
+    /// [`PolicyEngine::list_policies_for_user`].
+    ///
+    /// Returned `UserPolicies` includes match reasons for principal and, when
+    /// applicable, resource matches.
+    pub fn list_policies_for_user_with_resource(
+        &self,
+        user: &str,
+        groups: &[&str],
+        namespace: &[&str],
+        resource: Option<&Resource>,
+    ) -> Result<UserPolicies, PolicyError> {
+        self.list_policies_for_user_with_resource_and_effect(
+            user,
+            groups,
+            namespace,
+            resource,
+            PolicyEffectFilter::Any,
+        )
+    }
+
+    /// List all policies applicable to a user with optional resource and effect filtering.
+    pub fn list_policies_for_user_with_resource_and_effect(
+        &self,
+        user: &str,
+        groups: &[&str],
+        namespace: &[&str],
+        resource: Option<&Resource>,
+        effect_filter: PolicyEffectFilter,
+    ) -> Result<UserPolicies, PolicyError> {
+        let principal = PrincipalQuery::for_user(user, groups, namespace)?;
+        self.list_policies_dispatch(user, &principal, resource, effect_filter)
+    }
+
+    /// List all policies applicable to a group principal.
+    ///
+    /// Useful when callers model group identities directly as principals
+    /// (mirroring `Principal::Group` in [`PolicyEngine::evaluate`]).
+    ///
+    /// Resource constraints are not applied in this method. To also filter by
+    /// resource constraints, use
+    /// [`PolicyEngine::list_policies_for_group_with_resource`].
+    pub fn list_policies_for_group(
+        &self,
+        group: &str,
+        namespace: &[&str],
+    ) -> Result<UserPolicies, PolicyError> {
+        self.list_policies_for_group_with_resource_and_effect(
+            group,
+            namespace,
+            None,
+            PolicyEffectFilter::Any,
+        )
+    }
+
+    /// List all policies applicable to a group principal, optionally filtering by resource constraints.
+    ///
+    /// This applies principal constraints for a group principal and, when
+    /// `resource` is provided, resource constraints as well.
+    pub fn list_policies_for_group_with_resource(
+        &self,
+        group: &str,
+        namespace: &[&str],
+        resource: Option<&Resource>,
+    ) -> Result<UserPolicies, PolicyError> {
+        self.list_policies_for_group_with_resource_and_effect(
+            group,
+            namespace,
+            resource,
+            PolicyEffectFilter::Any,
+        )
+    }
+
+    /// List all policies applicable to a group principal with optional resource and effect filtering.
+    pub fn list_policies_for_group_with_resource_and_effect(
+        &self,
+        group: &str,
+        namespace: &[&str],
+        resource: Option<&Resource>,
+        effect_filter: PolicyEffectFilter,
+    ) -> Result<UserPolicies, PolicyError> {
+        let principal = PrincipalQuery::for_group(group, namespace)?;
+        self.list_policies_dispatch(group, &principal, resource, effect_filter)
+    }
+
+    fn list_policies_dispatch(
+        &self,
+        principal_id: &str,
+        principal: &PrincipalQuery,
+        resource: Option<&Resource>,
+        effect_filter: PolicyEffectFilter,
+    ) -> Result<UserPolicies, PolicyError> {
         let snapshot = self.current_snapshot();
         let policies = snapshot.set.policies();
-
-        // Build the principal UID for the user using qualified_id patterns
-        let user_uid_string = if namespace.is_empty() {
-            format!("User::\"{user}\"")
-        } else {
-            format!("{}::User::\"{user}\"", namespace.join("::"))
+        let resource_query = match resource {
+            Some(resource) => Some(ResourceQuery::from_resource(resource)?),
+            None => None,
         };
-        let user_uid: EntityUid = user_uid_string.parse()?;
-
-        // Build group UIDs as a set for efficient membership checking
-        let group_uids: std::collections::HashSet<EntityUid> = groups
-            .iter()
-            .map(|g| {
-                let group_uid_string = if namespace.is_empty() {
-                    format!("Group::\"{g}\"")
-                } else {
-                    format!("{}::Group::\"{g}\"", namespace.join("::"))
-                };
-                group_uid_string.parse::<EntityUid>()
-            })
-            .collect::<Result<_, _>>()?;
-
-        let mut matching_policies: Vec<Policy> = Vec::new();
+        let mut matching_policies: Vec<(Policy, Vec<PolicyMatchReason>)> = Vec::new();
 
         for policy in policies {
-            let pc = policy.principal_constraint();
-            let matches = match pc {
-                // Exact user match
-                PrincipalConstraint::Eq(uid) => uid == user_uid,
-                // User is in this group (check if the group is in the user's groups)
-                PrincipalConstraint::In(group_uid) => group_uids.contains(&group_uid),
-                // Any principal matches
-                PrincipalConstraint::Any => true,
-                // Type-based constraints don't apply in this listing context
-                PrincipalConstraint::Is(_) => false,
-                PrincipalConstraint::IsIn(_, _) => false,
+            if !matches_effect(policy.effect(), effect_filter) {
+                continue;
+            }
+
+            let Some(principal_reason) =
+                principal_match_reason(policy.principal_constraint(), principal)
+            else {
+                continue;
             };
 
-            if matches {
-                matching_policies.push(policy.clone());
+            let Some(resource_reason) =
+                resource_match_reason(policy.resource_constraint(), resource_query.as_ref())
+            else {
+                continue;
+            };
+
+            let mut reasons = vec![principal_reason];
+            if let Some(resource_reason) = resource_reason {
+                reasons.push(resource_reason);
             }
+
+            matching_policies.push((policy.clone(), reasons));
         }
 
-        Ok(UserPolicies::new(user, &matching_policies))
+        Ok(UserPolicies::new_with_matches(
+            principal_id,
+            matching_policies,
+        ))
     }
 
     pub fn policies(&self) -> Result<Vec<Policy>, PolicyError> {
@@ -615,11 +757,12 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
+    use cedar_policy::EntityUid;
     use crate::labels::{LabelRegistryBuilder, RegexLabeler};
     use crate::snapshot_decision;
     use crate::types::AttrValue;
     use crate::types::{Decision::Allow, Decision::Deny, Group, Resource};
-    use crate::{Action, User};
+    use crate::{Action, PolicyEffectFilter, PolicyMatchReason, User};
     use regex::Regex;
     use yare::parameterized;
 
@@ -791,6 +934,50 @@ permit (
 ) when {
     resource.ip.isInRange(ip("192.168.0.0/24"))
 };
+"#;
+
+    const TEST_POLICY_WITH_IS_AND_ISIN: &str = r#"
+permit (
+    principal is User,
+    action == Action::"read",
+    resource
+);
+
+permit (
+    principal is User in Group::"admins",
+    action == Action::"write",
+    resource
+);
+
+permit (
+    principal is Group,
+    action == Action::"group_read",
+    resource
+);
+
+permit (
+    principal is Group in Group::"admins",
+    action == Action::"group_write",
+    resource
+);
+"#;
+
+    const TEST_POLICY_WITH_RESOURCE_CONSTRAINTS: &str = r#"
+permit (
+    principal,
+    action == Action::"view",
+    resource is Photo
+);
+permit (
+    principal,
+    action == Action::"edit",
+    resource == Photo::"vacation.jpg"
+);
+permit (
+    principal,
+    action == Action::"create",
+    resource is Host
+);
 "#;
 
     #[parameterized(
@@ -1025,6 +1212,345 @@ permit (
 
         // Should have 2 policies for alice (one with exact match, one with generic action)
         assert_eq!(user_policies.policies().len(), 2);
+    }
+
+    #[test]
+    fn test_list_policies_with_is_and_isin() {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_IS_AND_ISIN).unwrap();
+
+        let user_policies = engine
+            .list_policies_for_user("alice", &["admins"], &[])
+            .expect("Failed to list permissions");
+
+        assert_eq!(user_policies.policies().len(), 2);
+
+        let mut has_principal_is = false;
+        let mut has_principal_is_in = false;
+        for policy_match in user_policies.matches() {
+            has_principal_is |= policy_match
+                .reasons
+                .contains(&PolicyMatchReason::PrincipalIs);
+            has_principal_is_in |= policy_match
+                .reasons
+                .contains(&PolicyMatchReason::PrincipalIsIn);
+        }
+
+        assert!(has_principal_is);
+        assert!(has_principal_is_in);
+    }
+
+    #[test]
+    fn test_list_policies_for_group_with_is_and_isin() {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_IS_AND_ISIN).unwrap();
+
+        let group_policies = engine
+            .list_policies_for_group("admins", &[])
+            .expect("Failed to list group policies");
+
+        assert_eq!(group_policies.policies().len(), 2);
+
+        let reasons = group_policies
+            .matches()
+            .iter()
+            .flat_map(|m| m.reasons.iter().cloned())
+            .collect::<Vec<_>>();
+        assert!(reasons.contains(&PolicyMatchReason::PrincipalIs));
+        assert!(reasons.contains(&PolicyMatchReason::PrincipalIsIn));
+    }
+
+    #[test]
+    fn test_list_policies_with_optional_resource_constraints() {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_RESOURCE_CONSTRAINTS).unwrap();
+
+        let without_resource = engine
+            .list_policies_for_user("alice", &[], &[])
+            .expect("Failed listing policies");
+        assert_eq!(without_resource.policies().len(), 3);
+
+        let photo = Resource::new("Photo", "vacation.jpg");
+        let with_photo = engine
+            .list_policies_for_user_with_resource("alice", &[], &[], Some(&photo))
+            .expect("Failed listing policies with resource");
+        assert_eq!(with_photo.policies().len(), 2);
+
+        let host = Resource::new("Host", "web-01");
+        let with_host = engine
+            .list_policies_for_user_with_resource("alice", &[], &[], Some(&host))
+            .expect("Failed listing policies with host resource");
+        assert_eq!(with_host.policies().len(), 1);
+
+        let reasons = with_photo
+            .matches()
+            .iter()
+            .flat_map(|m| m.reasons.iter().cloned())
+            .collect::<Vec<_>>();
+        assert!(reasons.contains(&PolicyMatchReason::ResourceIs));
+        assert!(reasons.contains(&PolicyMatchReason::ResourceEq));
+    }
+
+    #[test]
+    fn test_group_membership_is_evaluated_per_request_and_per_listing_call() {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_GROUPS).unwrap();
+
+        // Same user, no groups: should not match group-based policies.
+        let no_group_request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("view", None),
+            resource: Resource::new("Photo", "photo.jpg"),
+        };
+        assert!(matches!(
+            engine.evaluate(&no_group_request).unwrap(),
+            Deny { .. }
+        ));
+
+        // Same user, with users group: now group policy should match.
+        let users_group_request = Request {
+            principal: Principal::User(User::new("alice", Some(vec!["users".into()]), None)),
+            action: Action::new("view", None),
+            resource: Resource::new("Photo", "photo.jpg"),
+        };
+        assert!(matches!(
+            engine.evaluate(&users_group_request).unwrap(),
+            Allow { .. }
+        ));
+
+        // Same engine + same user id for listing, but different group input:
+        // group membership is taken from call input, not cached globally.
+        let listed_without_groups = engine.list_policies_for_user("alice", &[], &[]).unwrap();
+        let listed_with_users = engine
+            .list_policies_for_user("alice", &["users"], &[])
+            .unwrap();
+
+        assert_eq!(listed_without_groups.policies().len(), 0);
+        assert_eq!(listed_with_users.policies().len(), 1);
+        assert!(
+            listed_with_users
+                .matches()
+                .iter()
+                .any(|m| m.reasons.contains(&PolicyMatchReason::PrincipalIn))
+        );
+    }
+
+    #[test]
+    fn test_list_policies_mirrors_evaluate_input_shape() {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_GROUPS).unwrap();
+        let request = Request {
+            principal: Principal::User(User::new("alice", Some(vec!["admins".into()]), None)),
+            action: Action::new("view", None),
+            resource: Resource::new("Photo", "photo.jpg"),
+        };
+
+        let listed = engine.list_policies(&request).unwrap();
+        assert_eq!(listed.policies().len(), 1);
+        assert!(
+            listed
+                .matches()
+                .iter()
+                .all(|m| m.reasons.contains(&PolicyMatchReason::PrincipalIn))
+        );
+        assert!(
+            listed
+                .matches()
+                .iter()
+                .all(|m| m.reasons.contains(&PolicyMatchReason::ResourceIs))
+        );
+    }
+
+    #[test]
+    fn test_list_policies_output_is_deterministic() {
+        let engine = PolicyEngine::new_from_str(TEST_PERMISSION_POLICY).unwrap();
+        let first = engine.list_policies_for_user("alice", &[], &[]).unwrap();
+        let second = engine.list_policies_for_user("alice", &[], &[]).unwrap();
+
+        let first_ids = first
+            .matches()
+            .iter()
+            .map(|m| m.cedar_id.clone())
+            .collect::<Vec<_>>();
+        let second_ids = second
+            .matches()
+            .iter()
+            .map(|m| m.cedar_id.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(first_ids, second_ids);
+    }
+
+    #[test]
+    fn test_list_policies_effect_filter_defaults_to_any_and_can_filter() {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_FORBID).unwrap();
+        let resource = Resource::new("Photo", "VacationPhoto94.jpg");
+
+        // Default API includes both permit and forbid (Any).
+        let default_any = engine
+            .list_policies_for_user_with_resource("alice", &[], &[], Some(&resource))
+            .unwrap();
+        assert_eq!(default_any.policies().len(), 3);
+
+        let permit_only = engine
+            .list_policies_for_user_with_resource_and_effect(
+                "alice",
+                &[],
+                &[],
+                Some(&resource),
+                PolicyEffectFilter::Permit,
+            )
+            .unwrap();
+        assert_eq!(permit_only.policies().len(), 1);
+        assert!(
+            permit_only
+                .policies()
+                .iter()
+                .all(|policy| policy.effect() == cedar_policy::Effect::Permit)
+        );
+
+        let forbid_only = engine
+            .list_policies_for_user_with_resource_and_effect(
+                "alice",
+                &[],
+                &[],
+                Some(&resource),
+                PolicyEffectFilter::Forbid,
+            )
+            .unwrap();
+        assert_eq!(forbid_only.policies().len(), 2);
+        assert!(
+            forbid_only
+                .policies()
+                .iter()
+                .all(|policy| policy.effect() == cedar_policy::Effect::Forbid)
+        );
+    }
+
+    #[test]
+    fn test_list_policies_with_effect_consistent_with_evaluate_on_forbid_deny() {
+        let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_FORBID).unwrap();
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("edit", None),
+            resource: Resource::new("Photo", "VacationPhoto94.jpg"),
+        };
+
+        let decision = engine.evaluate(&request).unwrap();
+        assert!(matches!(decision, Deny { .. }));
+
+        let any = engine.list_policies(&request).unwrap();
+        let permit = engine
+            .list_policies_with_effect(&request, PolicyEffectFilter::Permit)
+            .unwrap();
+        let forbid = engine
+            .list_policies_with_effect(&request, PolicyEffectFilter::Forbid)
+            .unwrap();
+
+        // Listing is currently principal+resource scoped (not action scoped),
+        // so both forbid policies match this request shape.
+        assert_eq!(any.policies().len(), 3);
+        assert_eq!(permit.policies().len(), 1);
+        assert_eq!(forbid.policies().len(), 2);
+    }
+
+    #[test]
+    fn test_list_policies_for_group_with_effect_filter() {
+        let policy = r#"
+permit (
+    principal in Group::"admins",
+    action == Action::"view",
+    resource is Photo
+);
+forbid (
+    principal in Group::"admins",
+    action == Action::"delete",
+    resource is Photo
+);
+"#;
+        let engine = PolicyEngine::new_from_str(policy).unwrap();
+        let resource = Resource::new("Photo", "photo.jpg");
+
+        let any = engine
+            .list_policies_for_group_with_resource("admins", &[], Some(&resource))
+            .unwrap();
+        let permit = engine
+            .list_policies_for_group_with_resource_and_effect(
+                "admins",
+                &[],
+                Some(&resource),
+                PolicyEffectFilter::Permit,
+            )
+            .unwrap();
+        let forbid = engine
+            .list_policies_for_group_with_resource_and_effect(
+                "admins",
+                &[],
+                Some(&resource),
+                PolicyEffectFilter::Forbid,
+            )
+            .unwrap();
+
+        assert_eq!(any.policies().len(), 2);
+        assert_eq!(permit.policies().len(), 1);
+        assert_eq!(forbid.policies().len(), 1);
+    }
+
+    #[test]
+    fn test_list_policies_request_with_deep_namespace() {
+        let policy = r#"
+permit (
+    principal in A::B::C::Group::"admins",
+    action == A::B::C::Action::"view",
+    resource is A::B::C::Photo
+);
+"#;
+        let engine = PolicyEngine::new_from_str(policy).unwrap();
+        let request = Request {
+            principal: Principal::User(User::new(
+                "alice",
+                Some(vec!["admins".into()]),
+                Some(vec!["A".into(), "B".into(), "C".into()]),
+            )),
+            action: Action::new("view", Some(vec!["A".into(), "B".into(), "C".into()])),
+            resource: Resource::new("A::B::C::Photo", "holiday-1"),
+        };
+
+        assert!(matches!(engine.evaluate(&request).unwrap(), Allow { .. }));
+        let listed = engine.list_policies(&request).unwrap();
+        assert_eq!(listed.policies().len(), 1);
+    }
+
+    #[test]
+    fn test_list_policies_mixed_effect_order_is_deterministic() {
+        let policy = r#"
+@id("p3")
+permit (principal == User::"alice", action == Action::"read", resource == Photo::"p");
+@id("f1")
+forbid (principal == User::"alice", action == Action::"read", resource == Photo::"p");
+@id("p2")
+permit (principal == User::"alice", action == Action::"read", resource == Photo::"p");
+"#;
+        let engine = PolicyEngine::new_from_str(policy).unwrap();
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("read", None),
+            resource: Resource::new("Photo", "p"),
+        };
+
+        let first = engine.list_policies(&request).unwrap();
+        let second = engine.list_policies(&request).unwrap();
+
+        let first_ids = first
+            .matches()
+            .iter()
+            .map(|m| m.cedar_id.clone())
+            .collect::<Vec<_>>();
+        let second_ids = second
+            .matches()
+            .iter()
+            .map(|m| m.cedar_id.clone())
+            .collect::<Vec<_>>();
+
+        let mut sorted = first_ids.clone();
+        sorted.sort();
+        assert_eq!(first_ids, second_ids);
+        assert_eq!(first_ids, sorted);
     }
 
     #[test]

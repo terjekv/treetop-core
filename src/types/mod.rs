@@ -13,6 +13,7 @@ mod action;
 mod attr_value;
 mod cedar_type;
 mod decision;
+mod entity_uid;
 mod group;
 mod principal;
 mod qualified_id;
@@ -26,6 +27,9 @@ pub use action::Action;
 pub use attr_value::AttrValue;
 pub use cedar_type::CedarType;
 pub use decision::{Decision, FromDecisionWithPolicy, PermitPolicies, PermitPolicy, PolicyVersion};
+pub use entity_uid::{
+    action_entity_uid, group_entity_uid, namespace_segments, resource_entity_uid, user_entity_uid,
+};
 pub use group::{Group, Groups};
 pub use principal::Principal;
 pub use qualified_id::{
@@ -34,4 +38,4 @@ pub use qualified_id::{
 pub use request::Request;
 pub use resource::Resource;
 pub use user::User;
-pub use user_policies::UserPolicies;
+pub use user_policies::{PolicyEffectFilter, PolicyMatch, PolicyMatchReason, UserPolicies};

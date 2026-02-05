@@ -98,7 +98,9 @@ pub use labels::{LabelRegistry, LabelRegistryBuilder, Labeler, RegexLabeler};
 pub use loader::compile_policy;
 pub use types::{
     Action, AttrValue, CedarType, Decision, Group, Groups, PermitPolicies, PermitPolicy,
-    PolicyVersion, Principal, Request, Resource, User, UserPolicies,
+    PolicyEffectFilter, PolicyMatch, PolicyMatchReason, PolicyVersion, Principal, Request,
+    Resource, User, UserPolicies,
+    action_entity_uid, group_entity_uid, namespace_segments, resource_entity_uid, user_entity_uid,
 };
 
 #[cfg(feature = "observability")]
@@ -113,6 +115,8 @@ mod loader;
 pub mod metrics;
 #[cfg(not(feature = "observability"))]
 mod metrics;
+mod policy_match;
+mod query;
 mod tests;
 mod timers;
 mod traits;
