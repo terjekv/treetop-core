@@ -117,6 +117,7 @@ impl PolicySnapshot {
 }
 
 /// Extract all permit policies from the Cedar authorization result.
+#[inline]
 fn extract_permit_policies(
     snapshot: &PolicySnapshot,
     result: &cedar_policy::Response,
@@ -134,6 +135,7 @@ fn extract_permit_policies(
 }
 
 /// Iterate over groups from a request principal.
+#[inline]
 fn request_groups(request: &Request) -> Option<&Groups> {
     match &request.principal {
         Principal::User(user) => Some(user.groups()),
@@ -142,6 +144,7 @@ fn request_groups(request: &Request) -> Option<&Groups> {
 }
 
 /// Apply label augmentations to a resource.
+#[inline]
 fn apply_labels(
     registry: &Option<Arc<LabelRegistry>>,
     resource: &mut crate::types::Resource,
@@ -157,6 +160,7 @@ fn apply_labels(
 
 /// Build a Cedar request from the authorization request and resource.
 /// UIDs should be pre-converted to avoid redundant conversions.
+#[inline]
 fn build_cedar_req(
     principal_uid: &cedar_policy::EntityUid,
     action_uid: &cedar_policy::EntityUid,
@@ -179,6 +183,7 @@ fn build_cedar_req(
 
 /// Build Cedar entities for the principal, resource, and groups.
 /// UIDs should be pre-converted to avoid redundant conversions.
+#[inline]
 fn build_entities(
     principal_uid: &cedar_policy::EntityUid,
     resource_uid: &cedar_policy::EntityUid,
@@ -221,13 +226,12 @@ fn build_entities(
         let principal_entity =
             Entity::new(principal_uid.clone(), HashMap::new(), group_uids.clone())?;
 
-        // Construct group entities
-        let group_entities: Vec<Entity> = group_uids.into_iter().map(Entity::with_uid).collect();
+        // Construct group entities and batch all entities into a single call
+        let mut all_entities = vec![principal_entity, resource_entity];
+        all_entities.extend(group_uids.into_iter().map(Entity::with_uid));
 
-        // Combine all entities (use manual resource_entity to include attributes)
-        Entities::empty()
-            .add_entities(vec![principal_entity, resource_entity], schema)?
-            .add_entities(group_entities, schema)?
+        // Combine all entities in a single call to reduce overhead
+        Entities::empty().add_entities(all_entities, schema)?
     };
 
     debug!(
