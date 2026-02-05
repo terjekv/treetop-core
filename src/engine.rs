@@ -194,17 +194,20 @@ fn build_entities(
         #[cfg(feature = "observability")]
         let _entity_span = info_span!("construct_entities").entered();
 
-        // Collect group UIDs
+        // Collect group UIDs with pre-allocation to avoid over-allocations
         let group_uids = {
             let _timer = PhaseTimer::new(&mut timers.groups);
             #[cfg(feature = "observability")]
             let _groups_span = info_span!("resolve_groups").entered();
 
             match groups {
-                Some(groups) => groups
-                    .into_iter()
-                    .map(|g| g.cedar_entity_uid())
-                    .collect::<Result<_, _>>()?,
+                Some(groups_slice) => {
+                    let mut uids = Vec::with_capacity(groups_slice.len());
+                    for g in groups_slice {
+                        uids.push(g.cedar_entity_uid()?);
+                    }
+                    uids.into_iter().collect::<HashSet<_>>()
+                }
                 None => HashSet::new(),
             }
         };
