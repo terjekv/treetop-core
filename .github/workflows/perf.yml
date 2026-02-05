@@ -11,9 +11,8 @@ permissions:
 jobs:
   iai-callgrind:
     name: iai-callgrind PR Bench
-    uses: terjekv/github-action-iai-callgrind/.github/workflows/iai-callgrind-pr-bench.yml@91ff329a5b3da51a67af87c02212df074350a608
+    uses: terjekv/github-action-iai-callgrind/.github/workflows/iai-callgrind-pr-bench.yml@v1
     with:
-      action_ref: 91ff329a5b3da51a67af87c02212df074350a608
       benchmarks_json: >-
         ["evaluate_iai"]
       feature_sets_json: >-
