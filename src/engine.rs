@@ -2,7 +2,7 @@ use cedar_policy::{
     Authorizer, Entities, Entity, Policy, PolicyId, PolicySet, Request as CedarRequest,
 };
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 use std::vec;
 
@@ -15,8 +15,8 @@ use crate::types::{
     Decision, FromDecisionWithPolicy, PermitPolicies, PermitPolicy, PolicyEffectFilter,
     PolicyMatchReason, PolicyVersion, Request, Resource, UserPolicies,
 };
-use crate::{error::PolicyError, loader};
 use crate::{Groups, Principal};
+use crate::{error::PolicyError, loader};
 use arc_swap::ArcSwap;
 
 use sha2::{Digest, Sha256};
@@ -26,8 +26,14 @@ use tracing::info_span;
 
 #[cfg(feature = "observability")]
 use crate::metrics::{
-    record_evaluation, record_evaluation_phases, record_reload, EvaluationPhases, EvaluationStats,
+    EvaluationPhases, EvaluationStats, record_evaluation, record_evaluation_phases, record_reload,
 };
+
+/// Static cached Authorizer instance (stateless, reusable across evaluations).
+fn get_authorizer() -> &'static Authorizer {
+    static AUTHORIZER: OnceLock<Authorizer> = OnceLock::new();
+    AUTHORIZER.get_or_init(Authorizer::new)
+}
 
 /// Aggregates timing information for all evaluation phases.
 #[derive(Debug)]
@@ -111,6 +117,7 @@ impl PolicySnapshot {
 }
 
 /// Extract all permit policies from the Cedar authorization result.
+#[inline]
 fn extract_permit_policies(
     snapshot: &PolicySnapshot,
     result: &cedar_policy::Response,
@@ -128,6 +135,7 @@ fn extract_permit_policies(
 }
 
 /// Iterate over groups from a request principal.
+#[inline]
 fn request_groups(request: &Request) -> Option<&Groups> {
     match &request.principal {
         Principal::User(user) => Some(user.groups()),
@@ -136,6 +144,7 @@ fn request_groups(request: &Request) -> Option<&Groups> {
 }
 
 /// Apply label augmentations to a resource.
+#[inline]
 fn apply_labels(
     registry: &Option<Arc<LabelRegistry>>,
     resource: &mut crate::types::Resource,
@@ -150,31 +159,34 @@ fn apply_labels(
 }
 
 /// Build a Cedar request from the authorization request and resource.
+/// UIDs should be pre-converted to avoid redundant conversions.
+#[inline]
 fn build_cedar_req(
-    request: &Request,
-    resource: &crate::types::Resource,
+    principal_uid: &cedar_policy::EntityUid,
+    action_uid: &cedar_policy::EntityUid,
+    resource_uid: &cedar_policy::EntityUid,
+    context: &cedar_policy::Context,
     timers: &mut EvalTimers,
 ) -> Result<CedarRequest, PolicyError> {
     let _timer = PhaseTimer::new(&mut timers.construct_req);
     #[cfg(feature = "observability")]
     let _req_span = info_span!("construct_cedar_req").entered();
-    let principal = request.principal.cedar_entity_uid()?;
-    let action = request.action.cedar_entity_uid()?;
-    let resource_uid = resource.cedar_entity_uid()?;
-    let context = resource.cedar_ctx()?;
 
     Ok(CedarRequest::new(
-        principal,
-        action,
-        resource_uid,
-        context,
+        principal_uid.clone(),
+        action_uid.clone(),
+        resource_uid.clone(),
+        context.clone(),
         None,
     )?)
 }
 
 /// Build Cedar entities for the principal, resource, and groups.
+/// UIDs should be pre-converted to avoid redundant conversions.
+#[inline]
 fn build_entities(
-    request: &Request,
+    principal_uid: &cedar_policy::EntityUid,
+    resource_uid: &cedar_policy::EntityUid,
     resource: &crate::types::Resource,
     groups: Option<&Groups>,
     timers: &mut EvalTimers,
@@ -187,39 +199,39 @@ fn build_entities(
         #[cfg(feature = "observability")]
         let _entity_span = info_span!("construct_entities").entered();
 
-        // Collect group UIDs
+        // Collect group UIDs with pre-allocation to avoid over-allocations
         let group_uids = {
             let _timer = PhaseTimer::new(&mut timers.groups);
             #[cfg(feature = "observability")]
             let _groups_span = info_span!("resolve_groups").entered();
 
             match groups {
-                Some(groups) => groups
-                    .into_iter()
-                    .map(|g| g.cedar_entity_uid())
-                    .collect::<Result<_, _>>()?,
+                Some(groups_slice) => {
+                    let mut uids = Vec::with_capacity(groups_slice.len());
+                    for g in groups_slice {
+                        uids.push(g.cedar_entity_uid()?);
+                    }
+                    uids.into_iter().collect::<HashSet<_>>()
+                }
                 None => HashSet::new(),
             }
         };
 
         // Construct resource entity
-        let resource_uid = resource.cedar_entity_uid()?;
         let resource_attrs = resource.cedar_attr()?;
         let resource_entity =
             cedar_policy::Entity::new(resource_uid.clone(), resource_attrs, Default::default())?;
 
         // Construct principal entity with groups as parents
-        let principal_uid = request.principal.cedar_entity_uid()?;
         let principal_entity =
             Entity::new(principal_uid.clone(), HashMap::new(), group_uids.clone())?;
 
-        // Construct group entities
-        let group_entities: Vec<Entity> = group_uids.into_iter().map(Entity::with_uid).collect();
+        // Construct group entities and batch all entities into a single call
+        let mut all_entities = vec![principal_entity, resource_entity];
+        all_entities.extend(group_uids.into_iter().map(Entity::with_uid));
 
-        // Combine all entities (use manual resource_entity to include attributes)
-        Entities::empty()
-            .add_entities(vec![principal_entity, resource_entity], schema)?
-            .add_entities(group_entities, schema)?
+        // Combine all entities in a single call to reduce overhead
+        Entities::empty().add_entities(all_entities, schema)?
     };
 
     debug!(
@@ -327,7 +339,6 @@ impl PolicyEngine {
         let mut timers = EvalTimers::start();
 
         let groups = request_groups(request);
-        let mut resource = request.resource.clone();
 
         debug!(
             event = "Request",
@@ -338,34 +349,70 @@ impl PolicyEngine {
             groups = %groups.map(ToString::to_string).unwrap_or_else(|| "[]".into())
         );
 
-        // Apply labels to augment resource attributes
-        apply_labels(&self.label_registry, &mut resource, &mut timers);
-        debug!(
-            event = "Request",
-            phase = "LabelsApplied",
-            time = timers.labels.as_micros(),
-            resource_attrs = ?resource.attrs()
-        );
+        // Convert UIDs once to avoid redundant conversions (on original resource)
+        let principal_uid = request.principal.cedar_entity_uid()?;
+        let action_uid = request.action.cedar_entity_uid()?;
+        let resource_uid_original = request.resource.cedar_entity_uid()?;
+        let context_original = request.resource.cedar_ctx()?;
 
-        // Build Cedar request from resource and request
-        let cedar_req = build_cedar_req(request, &resource, &mut timers)?;
+        // Only clone and apply labels if a label registry is configured
+        // We need to keep the potentially-modified resource for building entities
+        let (resource_uid, context, resource_for_entities) = if self.label_registry.is_some() {
+            let mut resource = request.resource.clone();
+            apply_labels(&self.label_registry, &mut resource, &mut timers);
 
-        let resource_uid = resource.cedar_entity_uid()?;
-        let context = resource.cedar_ctx()?;
+            debug!(
+                event = "Request",
+                phase = "LabelsApplied",
+                time = timers.labels.as_micros(),
+                resource_attrs = ?resource.attrs()
+            );
+
+            let uid = resource.cedar_entity_uid()?;
+            let ctx = resource.cedar_ctx()?;
+            (uid, ctx, resource)
+        } else {
+            debug!(
+                event = "Request",
+                phase = "LabelsApplied",
+                time = timers.labels.as_micros()
+            );
+
+            (
+                resource_uid_original,
+                context_original,
+                request.resource.clone(),
+            )
+        };
 
         debug!(
             event = "Request",
             phase = "Parsed",
-            principal = request.principal.cedar_entity_uid()?.to_string(),
-            action = request.action.cedar_entity_uid()?.to_string(),
+            principal = principal_uid.to_string(),
+            action = action_uid.to_string(),
             resource = resource_uid.to_string(),
             context = context.to_string(),
             groups = %groups.map(ToString::to_string).unwrap_or_else(|| "[]".into()),
-            attrs = ?resource.cedar_attr()
+            attrs = ?resource_for_entities.cedar_attr()
         );
 
-        // Build entities
-        let entities = build_entities(request, &resource, groups, &mut timers)?;
+        // Build Cedar request with pre-converted UIDs
+        let cedar_req = build_cedar_req(
+            &principal_uid,
+            &action_uid,
+            &resource_uid,
+            &context,
+            &mut timers,
+        )?;
+
+        // Build entities with pre-converted UIDs and potentially-modified resource
+        let entities = build_entities(
+            &principal_uid,
+            &resource_uid,
+            &resource_for_entities,
+            groups,
+            &mut timers,
+        )?;
 
         debug!(
             event = "Request",
@@ -449,12 +496,12 @@ impl PolicyEngine {
         // Prepare the request: apply labels, build entities, resolve groups
         let mut prepared = self.prepare(request)?;
 
-        // Perform authorization with RAII timing
+        // Perform authorization with RAII timing (using cached Authorizer)
         let result = {
             let _timer = PhaseTimer::new(&mut prepared.timers.authz);
             #[cfg(feature = "observability")]
             let _authz_span = info_span!("authorize").entered();
-            Authorizer::new().is_authorized(
+            get_authorizer().is_authorized(
                 &prepared.cedar_req,
                 &prepared.snapshot.set,
                 &prepared.entities,
@@ -587,10 +634,7 @@ impl PolicyEngine {
     ///
     /// Effect filter defaults to `Any`; to filter by permit/forbid, use
     /// [`PolicyEngine::list_policies_with_effect`].
-    pub fn list_policies(
-        &self,
-        request: &Request,
-    ) -> Result<UserPolicies, PolicyError> {
+    pub fn list_policies(&self, request: &Request) -> Result<UserPolicies, PolicyError> {
         self.list_policies_with_effect(request, PolicyEffectFilter::Any)
     }
 
@@ -757,12 +801,12 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use cedar_policy::EntityUid;
     use crate::labels::{LabelRegistryBuilder, RegexLabeler};
     use crate::snapshot_decision;
     use crate::types::AttrValue;
     use crate::types::{Decision::Allow, Decision::Deny, Group, Resource};
     use crate::{Action, PolicyEffectFilter, PolicyMatchReason, User};
+    use cedar_policy::EntityUid;
     use regex::Regex;
     use yare::parameterized;
 
