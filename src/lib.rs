@@ -105,6 +105,8 @@ pub use types::{
 
 #[cfg(feature = "observability")]
 pub use metrics::{EvaluationPhases, EvaluationStats, MetricsSink, ReloadStats, set_sink};
+#[cfg(feature = "bench-internal")]
+pub mod bench_helpers;
 
 mod build_info;
 mod engine;
