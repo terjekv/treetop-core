@@ -18,12 +18,19 @@ jobs:
           "evaluate_iai_baseline",
           "evaluate_iai_groups",
           "evaluate_iai_labels",
-          "evaluate_iai_namespaced"
+          "evaluate_iai_namespaced",
+          "bench_iai_loader",
+          "bench_iai_policy_match",
+          "bench_iai_query",
+          "bench_iai_entity_uid",
+          "bench_iai_attr_value",
+          "bench_iai_metrics",
+          "bench_iai_timers"
         ]
       feature_sets_json: >-
         [
-          {"name":"no-obs","features":""},
-          {"name":"obs","features":"observability"}
+          {"name":"no-obs","features":"bench-internal"},
+          {"name":"obs","features":"bench-internal,observability"}
         ]
       regression_threshold_pct: 8
       fail_on_regression: true

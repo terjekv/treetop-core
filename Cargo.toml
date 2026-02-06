@@ -48,6 +48,8 @@ default = []
 # Enable metrics collection (via MetricsSink) and tracing spans for observability.
 # Consumers can integrate with OpenTelemetry, Prometheus, or any metrics backend.
 observability = []
+# Expose internal helpers for benchmarks without making them part of the public API.
+bench-internal = []
 
 [dev-dependencies]
 criterion = "0.8"
@@ -94,3 +96,38 @@ harness = false
 [[bench]]
 name = "evaluate_iai_namespaced"
 harness = false
+
+[[bench]]
+name = "bench_iai_loader"
+harness = false
+required-features = ["bench-internal"]
+
+[[bench]]
+name = "bench_iai_policy_match"
+harness = false
+required-features = ["bench-internal"]
+
+[[bench]]
+name = "bench_iai_query"
+harness = false
+required-features = ["bench-internal"]
+
+[[bench]]
+name = "bench_iai_entity_uid"
+harness = false
+required-features = ["bench-internal"]
+
+[[bench]]
+name = "bench_iai_attr_value"
+harness = false
+required-features = ["bench-internal"]
+
+[[bench]]
+name = "bench_iai_metrics"
+harness = false
+required-features = ["bench-internal"]
+
+[[bench]]
+name = "bench_iai_timers"
+harness = false
+required-features = ["bench-internal"]
