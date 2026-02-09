@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.16] - 2026-02-09
+
+### Added
+
+- **Policy Matching & Querying**:
+  - `PolicyMatchReason` enum to explain why policies matched (PrincipalEq, PrincipalIn, PrincipalAny, PrincipalIs, PrincipalIsIn, ResourceEq, ResourceIn, ResourceAny, ResourceIs, ResourceIsIn)
+  - `PolicyMatch` struct containing Cedar policy ID and match reasons
+  - `PolicyEffectFilter` enum (Any, Permit, Forbid) for filtering policies by effect
+  - `UserPolicies::matches()` method to access match metadata
+  - `UserPolicies::reasons_for_policy()` method to get reasons for a specific policy
+  - Multiple new policy listing methods on `PolicyEngine`:
+    - `list_policies()` - List policies for a concrete request
+    - `list_policies_with_effect()` - List policies with effect filtering
+    - `list_policies_for_user_with_resource()` - Combine principal and resource constraints
+    - `list_policies_for_user_with_resource_and_effect()` - With both resource and effect filters
+    - `list_policies_for_group()` - For group principals
+    - `list_policies_for_group_with_resource()` - For groups with resource filtering
+  - Public utility functions: `action_entity_uid()`, `group_entity_uid()`, `resource_entity_uid()`, `user_entity_uid()`, `namespace_segments()`
+- **Performance Tracking & Benchmarking**:
+  - Comprehensive iai-callgrind benchmarks for instruction-level performance analysis
+  - Benchmark suites for baseline scenarios, groups, labels, namespaced operations, and internal operations
+  - `bench-internal` feature flag to expose internal helpers for benchmarking
+  - `docs/Perf.md` documentation for performance tracking
+  - `scripts/perf/compare_criterion.py` for performance analysis
+  - CI workflow for automated performance tracking
+- **Dependency Management**:
+  - Configured Dependabot for automated Cargo dependency updates
+
+### Changed
+
+- `UserPolicies` now includes match metadata with reasons explaining why each policy matched
+- `UserPolicies` results are now deterministically sorted by Cedar policy ID
+- `UserPolicies` serialization now includes a `matches` field with match metadata
+
+### Performance
+
+- Cached static `Authorizer` instance (stateless, reusable across all evaluations)
+- Reduced redundant UID conversions in Cedar request building by pre-converting UIDs once
+- Optimized group UID collection with pre-allocation to reduce memory overhead
+- Added inline annotations to hot-path functions for improved performance
+- Label application now only clones resources when a label registry is configured
+
 ## [0.0.15] - 2026-02-02
 
 ### Added
