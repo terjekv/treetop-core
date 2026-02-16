@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["cedar", "policy", "authentication"]
 
 [dependencies]
-cedar-policy = "4.5"
+cedar-policy = "4.9"
 cedar-policy-core = "4.5"
 humantime = "2"
 sha2 = "0.10"
