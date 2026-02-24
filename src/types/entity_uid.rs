@@ -12,7 +12,12 @@ pub fn namespace_segments(namespace: &[&str]) -> Option<Vec<String>> {
     if namespace.is_empty() {
         return None;
     }
-    Some(namespace.iter().map(|segment| segment.to_string()).collect())
+    Some(
+        namespace
+            .iter()
+            .map(|segment| segment.to_string())
+            .collect(),
+    )
 }
 
 /// Build a user `EntityUid` from an id + optional namespace.
@@ -31,10 +36,7 @@ pub fn action_entity_uid(action: &str, namespace: &[&str]) -> Result<EntityUid, 
 }
 
 /// Build a resource `EntityUid` from a kind + id pair.
-pub fn resource_entity_uid(
-    kind: &str,
-    resource_id: &str,
-) -> Result<EntityUid, PolicyError> {
+pub fn resource_entity_uid(kind: &str, resource_id: &str) -> Result<EntityUid, PolicyError> {
     Resource::new(kind, resource_id).cedar_entity_uid()
 }
 

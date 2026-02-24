@@ -1,5 +1,5 @@
 use cedar_policy::{
-    Authorizer, Entities, Entity, Policy, PolicyId, PolicySet, Request as CedarRequest,
+    Authorizer, Entities, Entity, Policy, PolicyId, PolicySet, Request as CedarRequest, Schema,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
@@ -15,8 +15,8 @@ use crate::types::{
     Decision, FromDecisionWithPolicy, PermitPolicies, PermitPolicy, PolicyEffectFilter,
     PolicyMatchReason, PolicyVersion, Request, Resource, UserPolicies,
 };
-use crate::{Groups, Principal};
 use crate::{error::PolicyError, loader};
+use crate::{Groups, Principal};
 use arc_swap::ArcSwap;
 
 use sha2::{Digest, Sha256};
@@ -26,7 +26,7 @@ use tracing::info_span;
 
 #[cfg(feature = "observability")]
 use crate::metrics::{
-    EvaluationPhases, EvaluationStats, record_evaluation, record_evaluation_phases, record_reload,
+    record_evaluation, record_evaluation_phases, record_reload, EvaluationPhases, EvaluationStats,
 };
 
 /// Static cached Authorizer instance (stateless, reusable across evaluations).
@@ -83,6 +83,7 @@ struct PolicySnapshot {
     set: PolicySet,
     version: PolicyVersion,
     permit_policies: HashMap<PolicyId, PermitPolicy>,
+    schema: Option<Arc<Schema>>,
 }
 
 /// Convenience alias for a shared policy snapshot.
@@ -90,7 +91,17 @@ type Snapshot = Arc<PolicySnapshot>;
 
 impl PolicySnapshot {
     fn from_policy_text(policy_text: &str) -> Result<Self, PolicyError> {
-        let set = loader::compile_policy(policy_text)?;
+        Self::from_policy_text_with_schema(policy_text, None)
+    }
+
+    fn from_policy_text_with_schema(
+        policy_text: &str,
+        schema: Option<Arc<Schema>>,
+    ) -> Result<Self, PolicyError> {
+        let set = match schema.as_deref() {
+            Some(schema) => loader::compile_policy_with_schema(policy_text, schema)?,
+            None => loader::compile_policy(policy_text)?,
+        };
         let permit_policies = loader::precompute_permit_policies(&set);
 
         let mut hasher = Sha256::new();
@@ -104,6 +115,7 @@ impl PolicySnapshot {
                 loaded_at: humantime::format_rfc3339(SystemTime::now()).to_string(),
             },
             permit_policies,
+            schema,
         })
     }
 
@@ -113,6 +125,10 @@ impl PolicySnapshot {
 
     fn version(&self) -> PolicyVersion {
         self.version.clone()
+    }
+
+    fn schema(&self) -> Option<&Schema> {
+        self.schema.as_deref()
     }
 }
 
@@ -166,6 +182,7 @@ fn build_cedar_req(
     action_uid: &cedar_policy::EntityUid,
     resource_uid: &cedar_policy::EntityUid,
     context: &cedar_policy::Context,
+    schema: Option<&Schema>,
     timers: &mut EvalTimers,
 ) -> Result<CedarRequest, PolicyError> {
     let _timer = PhaseTimer::new(&mut timers.construct_req);
@@ -177,7 +194,7 @@ fn build_cedar_req(
         action_uid.clone(),
         resource_uid.clone(),
         context.clone(),
-        None,
+        schema,
     )?)
 }
 
@@ -189,10 +206,9 @@ fn build_entities(
     resource_uid: &cedar_policy::EntityUid,
     resource: &crate::types::Resource,
     groups: Option<&Groups>,
+    schema: Option<&Schema>,
     timers: &mut EvalTimers,
 ) -> Result<Entities, PolicyError> {
-    let schema: Option<&cedar_policy::Schema> = None;
-
     // Time and measure entity construction
     let entities = {
         let _timer = PhaseTimer::new(&mut timers.entities);
@@ -286,6 +302,32 @@ impl PolicyEngine {
         })
     }
 
+    /// Create a new policy engine with schema-based policy and request validation.
+    pub fn new_from_str_with_schema(
+        policy_text: &str,
+        schema: Schema,
+    ) -> Result<Self, PolicyError> {
+        let snapshot: Snapshot = Arc::new(PolicySnapshot::from_policy_text_with_schema(
+            policy_text,
+            Some(Arc::new(schema)),
+        )?);
+        Ok(PolicyEngine {
+            inner: Arc::new(ArcSwap::from(Arc::new(snapshot))),
+            label_registry: None,
+        })
+    }
+
+    /// Create a new policy engine from policy text and Cedar schema text.
+    pub fn new_from_str_with_cedarschema(
+        policy_text: &str,
+        schema_text: &str,
+    ) -> Result<Self, PolicyError> {
+        let schema: Schema = schema_text
+            .parse()
+            .map_err(|e| PolicyError::ParseError(format!("failed to parse Cedar schema: {e}")))?;
+        Self::new_from_str_with_schema(policy_text, schema)
+    }
+
     /// Create a new policy engine with a label registry.
     ///
     /// This is a convenience method that combines `new_from_str` and `with_label_registry`.
@@ -307,12 +349,59 @@ impl PolicyEngine {
     }
 
     pub fn reload_from_str(&self, policy_text: &str) -> Result<(), PolicyError> {
-        let new_snapshot: Snapshot = Arc::new(PolicySnapshot::from_policy_text(policy_text)?);
+        let current_snapshot = self.current_snapshot();
+        let had_schema = current_snapshot.schema.is_some();
+        let schema = current_snapshot.schema.clone();
+        let new_snapshot: Snapshot = Arc::new(PolicySnapshot::from_policy_text_with_schema(
+            policy_text,
+            schema,
+        )?);
         self.inner.store(Arc::new(new_snapshot));
+        debug!(
+            event = "PolicyReload",
+            schema_enabled = had_schema,
+            schema_reloaded = false
+        );
         // Track reloads for metrics (no-op if feature disabled or no sink configured)
         #[cfg(feature = "observability")]
         record_reload();
         Ok(())
+    }
+
+    /// Reload policies and replace the engine schema at the same time.
+    pub fn reload_from_str_with_schema(
+        &self,
+        policy_text: &str,
+        schema: Schema,
+    ) -> Result<(), PolicyError> {
+        let had_schema = self.current_snapshot().schema.is_some();
+        let new_snapshot: Snapshot = Arc::new(PolicySnapshot::from_policy_text_with_schema(
+            policy_text,
+            Some(Arc::new(schema)),
+        )?);
+        self.inner.store(Arc::new(new_snapshot));
+        debug!(
+            event = "PolicyReload",
+            schema_enabled = true,
+            schema_reloaded = true,
+            schema_previously_enabled = had_schema
+        );
+        // Track reloads for metrics (no-op if feature disabled or no sink configured)
+        #[cfg(feature = "observability")]
+        record_reload();
+        Ok(())
+    }
+
+    /// Reload policies and replace the engine schema from Cedar schema text.
+    pub fn reload_from_str_with_cedarschema(
+        &self,
+        policy_text: &str,
+        schema_text: &str,
+    ) -> Result<(), PolicyError> {
+        let schema: Schema = schema_text
+            .parse()
+            .map_err(|e| PolicyError::ParseError(format!("failed to parse Cedar schema: {e}")))?;
+        self.reload_from_str_with_schema(policy_text, schema)
     }
 
     /// Get the current snapshot using a short-lived read lock, then drop the lock.
@@ -336,6 +425,7 @@ impl PolicyEngine {
     /// more testable and the main hot path more readable.
     fn prepare(&self, request: &Request) -> Result<PreparedRequest, PolicyError> {
         let snapshot = self.current_snapshot();
+        let schema = snapshot.schema();
         let mut timers = EvalTimers::start();
 
         let groups = request_groups(request);
@@ -402,6 +492,7 @@ impl PolicyEngine {
             &action_uid,
             &resource_uid,
             &context,
+            schema,
             &mut timers,
         )?;
 
@@ -411,6 +502,7 @@ impl PolicyEngine {
             &resource_uid,
             &resource_for_entities,
             groups,
+            schema,
             &mut timers,
         )?;
 
@@ -1024,6 +1116,27 @@ permit (
 );
 "#;
 
+    const TEST_SCHEMA: &str = r#"
+entity User;
+entity Group;
+entity Document {
+    sensitivity: Long
+};
+
+action "read" appliesTo {
+    principal: [User],
+    resource: [Document],
+};
+"#;
+
+    const TEST_SCHEMA_POLICY: &str = r#"
+permit (
+    principal == User::"alice",
+    action == Action::"read",
+    resource is Document
+);
+"#;
+
     #[parameterized(
         alice_edit_allow = { "alice", "edit", "VacationPhoto94.jpg" },
         alice_view_allow = { "alice", "view", "VacationPhoto94.jpg" },
@@ -1367,12 +1480,10 @@ permit (
 
         assert_eq!(listed_without_groups.policies().len(), 0);
         assert_eq!(listed_with_users.policies().len(), 1);
-        assert!(
-            listed_with_users
-                .matches()
-                .iter()
-                .any(|m| m.reasons.contains(&PolicyMatchReason::PrincipalIn))
-        );
+        assert!(listed_with_users
+            .matches()
+            .iter()
+            .any(|m| m.reasons.contains(&PolicyMatchReason::PrincipalIn)));
     }
 
     #[test]
@@ -1386,18 +1497,14 @@ permit (
 
         let listed = engine.list_policies(&request).unwrap();
         assert_eq!(listed.policies().len(), 1);
-        assert!(
-            listed
-                .matches()
-                .iter()
-                .all(|m| m.reasons.contains(&PolicyMatchReason::PrincipalIn))
-        );
-        assert!(
-            listed
-                .matches()
-                .iter()
-                .all(|m| m.reasons.contains(&PolicyMatchReason::ResourceIs))
-        );
+        assert!(listed
+            .matches()
+            .iter()
+            .all(|m| m.reasons.contains(&PolicyMatchReason::PrincipalIn)));
+        assert!(listed
+            .matches()
+            .iter()
+            .all(|m| m.reasons.contains(&PolicyMatchReason::ResourceIs)));
     }
 
     #[test]
@@ -1441,12 +1548,10 @@ permit (
             )
             .unwrap();
         assert_eq!(permit_only.policies().len(), 1);
-        assert!(
-            permit_only
-                .policies()
-                .iter()
-                .all(|policy| policy.effect() == cedar_policy::Effect::Permit)
-        );
+        assert!(permit_only
+            .policies()
+            .iter()
+            .all(|policy| policy.effect() == cedar_policy::Effect::Permit));
 
         let forbid_only = engine
             .list_policies_for_user_with_resource_and_effect(
@@ -1458,12 +1563,10 @@ permit (
             )
             .unwrap();
         assert_eq!(forbid_only.policies().len(), 2);
-        assert!(
-            forbid_only
-                .policies()
-                .iter()
-                .all(|policy| policy.effect() == cedar_policy::Effect::Forbid)
-        );
+        assert!(forbid_only
+            .policies()
+            .iter()
+            .all(|policy| policy.effect() == cedar_policy::Effect::Forbid));
     }
 
     #[test]
@@ -2373,5 +2476,112 @@ permit (principal == User::"alice", action == Action::"read", resource == Photo:
             }
             Decision::Deny { .. } => panic!("Expected Allow decision"),
         }
+    }
+
+    #[test]
+    fn test_schema_rejects_invalid_policy_at_load() {
+        let invalid_policy = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"write",
+                resource is Document
+            );
+        "#;
+
+        let result = PolicyEngine::new_from_str_with_cedarschema(invalid_policy, TEST_SCHEMA);
+        assert!(matches!(result, Err(PolicyError::ParseError(_))));
+    }
+
+    #[test]
+    fn test_schema_validates_request_principal_type() {
+        let engine =
+            PolicyEngine::new_from_str_with_cedarschema(TEST_SCHEMA_POLICY, TEST_SCHEMA).unwrap();
+
+        let request = Request {
+            principal: Principal::Group(Group::new("admins", None)),
+            action: Action::new("read", None),
+            resource: Resource::new("Document", "doc1")
+                .with_attr("sensitivity", AttrValue::Long(1)),
+        };
+
+        let result = engine.evaluate(&request);
+        assert!(matches!(
+            result,
+            Err(PolicyError::RequestValidationError(_))
+        ));
+    }
+
+    #[test]
+    fn test_schema_validates_entity_attribute_types() {
+        let engine =
+            PolicyEngine::new_from_str_with_cedarschema(TEST_SCHEMA_POLICY, TEST_SCHEMA).unwrap();
+
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("read", None),
+            resource: Resource::new("Document", "doc1")
+                .with_attr("sensitivity", AttrValue::String("high".into())),
+        };
+
+        let result = engine.evaluate(&request);
+        assert!(matches!(result, Err(PolicyError::EntityError(_))));
+    }
+
+    #[test]
+    fn test_schema_rejects_unknown_action_in_request() {
+        let engine =
+            PolicyEngine::new_from_str_with_cedarschema(TEST_SCHEMA_POLICY, TEST_SCHEMA).unwrap();
+
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("delete", None),
+            resource: Resource::new("Document", "doc1")
+                .with_attr("sensitivity", AttrValue::Long(1)),
+        };
+
+        let result = engine.evaluate(&request);
+        assert!(matches!(
+            result,
+            Err(PolicyError::RequestValidationError(_))
+        ));
+    }
+
+    #[test]
+    fn test_reload_preserves_schema_validation() {
+        let engine =
+            PolicyEngine::new_from_str_with_cedarschema(TEST_SCHEMA_POLICY, TEST_SCHEMA).unwrap();
+        let invalid_policy = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"write",
+                resource is Document
+            );
+        "#;
+
+        let result = engine.reload_from_str(invalid_policy);
+        assert!(matches!(result, Err(PolicyError::ParseError(_))));
+    }
+
+    #[test]
+    fn test_non_schema_engine_behavior_unchanged() {
+        let policy_not_allowed_by_test_schema = r#"
+            permit (
+                principal == User::"alice",
+                action == Action::"write",
+                resource is Document
+            );
+        "#;
+
+        // This should remain valid when no schema is configured.
+        let engine = PolicyEngine::new_from_str(policy_not_allowed_by_test_schema).unwrap();
+
+        let request = Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("write", None),
+            resource: Resource::new("Document", "doc1"),
+        };
+
+        let decision = engine.evaluate(&request).unwrap();
+        assert!(matches!(decision, Decision::Allow { .. }));
     }
 }

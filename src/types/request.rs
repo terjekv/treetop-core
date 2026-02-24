@@ -43,7 +43,7 @@ mod tests {
             action: Action::new("delete", None),
             resource: Resource::new("Database", "prod"),
         };
-        
+
         let serialized = serde_json::to_value(&request).unwrap();
         assert!(serialized["principal"].to_string().contains("admins"));
     }
@@ -55,10 +55,13 @@ mod tests {
             action: Action::new("create", Some(vec!["Admin".to_string()])),
             resource: Resource::new("Host", "web-01"),
         };
-        
+
         let serialized = serde_json::to_value(&request).unwrap();
         let deserialized: Request = serde_json::from_value(serialized).unwrap();
-        assert_eq!(request.principal.cedar_id(), deserialized.principal.cedar_id());
+        assert_eq!(
+            request.principal.cedar_id(),
+            deserialized.principal.cedar_id()
+        );
     }
 
     #[test]
@@ -71,7 +74,7 @@ mod tests {
                 .with_attr("owner", AttrValue::String("alice".to_string()))
                 .with_attr("public", AttrValue::Bool(false)),
         };
-        
+
         assert_eq!(request.resource.id(), "doc1");
     }
 
@@ -82,7 +85,7 @@ mod tests {
             action: Action::new("read", None),
             resource: Resource::new("File", "file1"),
         };
-        
+
         let cloned = request.clone();
         assert_eq!(request.principal.cedar_id(), cloned.principal.cedar_id());
         assert_eq!(request.action.cedar_id(), cloned.action.cedar_id());
@@ -96,7 +99,7 @@ mod tests {
             action: Action::new("read", None),
             resource: Resource::new("File", "file1"),
         };
-        
+
         let debug_str = format!("{:?}", request);
         assert!(debug_str.contains("Request"));
     }

@@ -260,11 +260,18 @@ fn test_metrics_integration_with_dns_policy() {
 
     // Verify matched policies are tracked
     let matched_policies = test_sink.matched_policies();
-    assert_eq!(matched_policies.len(), 9, "Should track matched policies for all 9 evaluations");
-    
+    assert_eq!(
+        matched_policies.len(),
+        9,
+        "Should track matched policies for all 9 evaluations"
+    );
+
     // Count how many evaluations had at least one matched policy
     let with_matches = matched_policies.iter().filter(|p| !p.is_empty()).count();
-    assert!(with_matches > 0, "At least some evaluations should have matched policies");
+    assert!(
+        with_matches > 0,
+        "At least some evaluations should have matched policies"
+    );
 }
 #[test]
 #[serial(metrics)]
@@ -378,7 +385,7 @@ fn test_matched_policies_tracking() {
 
     let engine = PolicyEngine::new_from_str(POLICY_WITH_IDS).expect("Failed to create engine");
     let test_sink = TestMetricsSink::new();
-    
+
     // Set the global metrics sink
     crate::metrics::set_sink(Arc::new(test_sink.clone()));
 
@@ -388,8 +395,13 @@ fn test_matched_policies_tracking() {
         action: Action::new("read", None),
         resource: Resource::new("Document", "doc1"),
     };
-    let result1 = engine.evaluate(&request1).expect("Evaluation should succeed");
-    assert!(matches!(result1, Decision::Allow { .. }), "Alice should be allowed to read doc1");
+    let result1 = engine
+        .evaluate(&request1)
+        .expect("Evaluation should succeed");
+    assert!(
+        matches!(result1, Decision::Allow { .. }),
+        "Alice should be allowed to read doc1"
+    );
 
     // Test 2: Bob should match the second permit policy (policy1)
     let request2 = Request {
@@ -397,8 +409,13 @@ fn test_matched_policies_tracking() {
         action: Action::new("write", None),
         resource: Resource::new("Document", "doc2"),
     };
-    let result2 = engine.evaluate(&request2).expect("Evaluation should succeed");
-    assert!(matches!(result2, Decision::Allow { .. }), "Bob should be allowed to write doc2");
+    let result2 = engine
+        .evaluate(&request2)
+        .expect("Evaluation should succeed");
+    assert!(
+        matches!(result2, Decision::Allow { .. }),
+        "Bob should be allowed to write doc2"
+    );
 
     // Test 3: Charlie should be denied by forbid policy (policy2)
     let request3 = Request {
@@ -406,8 +423,13 @@ fn test_matched_policies_tracking() {
         action: Action::new("delete", None),
         resource: Resource::new("Document", "doc3"),
     };
-    let result3 = engine.evaluate(&request3).expect("Evaluation should succeed");
-    assert!(matches!(result3, Decision::Deny { .. }), "Charlie should be denied delete on doc3");
+    let result3 = engine
+        .evaluate(&request3)
+        .expect("Evaluation should succeed");
+    assert!(
+        matches!(result3, Decision::Deny { .. }),
+        "Charlie should be denied delete on doc3"
+    );
 
     // Test 4: A request that matches no policies
     let request4 = Request {
@@ -415,8 +437,13 @@ fn test_matched_policies_tracking() {
         action: Action::new("read", None),
         resource: Resource::new("Document", "doc4"),
     };
-    let result4 = engine.evaluate(&request4).expect("Evaluation should succeed");
-    assert!(matches!(result4, Decision::Deny { .. }), "David should be denied (no matching policy)");
+    let result4 = engine
+        .evaluate(&request4)
+        .expect("Evaluation should succeed");
+    assert!(
+        matches!(result4, Decision::Deny { .. }),
+        "David should be denied (no matching policy)"
+    );
 
     // Verify matched policies
     let matched_policies = test_sink.matched_policies();
@@ -429,7 +456,8 @@ fn test_matched_policies_tracking() {
         matched_policies[0]
     );
     assert_eq!(
-        matched_policies[0], vec!["allow_alice_read"],
+        matched_policies[0],
+        vec!["allow_alice_read"],
         "Alice's matched policy should be 'allow_alice_read', got: {:?}",
         matched_policies[0]
     );
@@ -441,7 +469,8 @@ fn test_matched_policies_tracking() {
         matched_policies[1]
     );
     assert_eq!(
-        matched_policies[1], vec!["allow_bob_write"],
+        matched_policies[1],
+        vec!["allow_bob_write"],
         "Bob's matched policy should be 'allow_bob_write', got: {:?}",
         matched_policies[1]
     );
@@ -483,9 +512,10 @@ fn test_multiple_matched_policies() {
         );
     "#;
 
-    let engine = PolicyEngine::new_from_str(POLICY_WITH_MULTIPLE_MATCHES).expect("Failed to create engine");
+    let engine =
+        PolicyEngine::new_from_str(POLICY_WITH_MULTIPLE_MATCHES).expect("Failed to create engine");
     let test_sink = TestMetricsSink::new();
-    
+
     // Set the global metrics sink
     crate::metrics::set_sink(Arc::new(test_sink.clone()));
 
@@ -495,18 +525,24 @@ fn test_multiple_matched_policies() {
         action: Action::new("read", None),
         resource: Resource::new("Document", "public"),
     };
-    let result = engine.evaluate(&request).expect("Evaluation should succeed");
-    assert!(matches!(result, Decision::Allow { .. }), "Alice should be allowed");
+    let result = engine
+        .evaluate(&request)
+        .expect("Evaluation should succeed");
+    assert!(
+        matches!(result, Decision::Allow { .. }),
+        "Alice should be allowed"
+    );
 
     // Verify both policies were matched
     let matched_policies = test_sink.matched_policies();
     assert_eq!(matched_policies.len(), 1, "Should have 1 evaluation");
     assert_eq!(
-        matched_policies[0].len(), 2,
+        matched_policies[0].len(),
+        2,
         "Should have 2 matched policies, got: {:?}",
         matched_policies[0]
     );
-    
+
     // Verify that both policies are tracked (they'll be policy0 and policy1)
     let policy_ids = &matched_policies[0];
     assert!(

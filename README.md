@@ -155,6 +155,45 @@ let policies = engine.list_policies_for_user("alice", &[], &[]).unwrap();
  let json = serde_json::to_string(&policies).unwrap();
 ```
 
+## Cedar Schema Validation
+
+Schema validation is optional and opt-in. Existing `PolicyEngine::new_from_str(...)`
+and `reload_from_str(...)` behavior is unchanged and remains schema-free.
+
+When you want schema enforcement:
+
+```rust
+use treetop_core::PolicyEngine;
+
+let policies = r#"
+permit (
+    principal == User::"alice",
+    action == Action::"read",
+    resource is Document
+);
+"#;
+
+let schema = r#"
+entity User;
+entity Document;
+action "read" appliesTo {
+    principal: [User],
+    resource: [Document],
+};
+"#;
+
+let engine = PolicyEngine::new_from_str_with_cedarschema(policies, schema).unwrap();
+
+// Re-uses the same schema already loaded in the engine
+engine.reload_from_str(policies).unwrap();
+```
+
+With schema validation enabled:
+- policy load/reload fails if policies do not type-check against the schema
+- request evaluation fails with `RequestValidationError` when principal/action/resource
+  violates schema `appliesTo`
+- entity construction fails when attributes do not conform to schema types
+
 ## Groups
 
 Groups are listed as the principal entity type `Group`, and to permit access to member of a group, you can use the `in` operator. If you say `principal in Group::"admins"`, it will match any principal that is a member of the group `admins`, but if you say `principal == Group::"admins"`, it will only match the group itself, not its members. You will almost always want to use the `in` operator when dealing with groups...

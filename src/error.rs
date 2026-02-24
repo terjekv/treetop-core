@@ -56,7 +56,7 @@ pub enum PolicyError {
 
 impl From<RequestValidationError> for PolicyError {
     fn from(err: cedar_policy::RequestValidationError) -> Self {
-        PolicyError::EvalError(err.to_string())
+        PolicyError::RequestValidationError(err.to_string())
     }
 }
 
@@ -84,12 +84,8 @@ impl From<EntitiesError> for PolicyError {
     }
 }
 
-impl From<PoisonError<RwLockReadGuard<'_, cedar_policy::PolicySet>>>
-    for PolicyError
-{
-    fn from(
-        err: PoisonError<RwLockReadGuard<'_, cedar_policy::PolicySet>>,
-    ) -> Self {
+impl From<PoisonError<RwLockReadGuard<'_, cedar_policy::PolicySet>>> for PolicyError {
+    fn from(err: PoisonError<RwLockReadGuard<'_, cedar_policy::PolicySet>>) -> Self {
         PolicyError::PoisonedLockError(err.to_string())
     }
 }

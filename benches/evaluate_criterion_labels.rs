@@ -1,6 +1,6 @@
 mod evaluate_common;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use evaluate_common::{build_scenario, wide_matrix_specs_labels};
 use std::hint::black_box;
 use treetop_core::Decision;
@@ -22,15 +22,19 @@ fn benchmark_evaluate_labels(c: &mut Criterion) {
         .collect();
 
     for scenario in &scenarios {
-        group.bench_with_input(BenchmarkId::from_parameter(scenario.name), scenario, |b, s| {
-            b.iter(|| {
-                let decision = s
-                    .engine
-                    .evaluate(black_box(&s.request))
-                    .expect("benchmark requests are valid");
-                black_box(score(decision));
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(scenario.name),
+            scenario,
+            |b, s| {
+                b.iter(|| {
+                    let decision = s
+                        .engine
+                        .evaluate(black_box(&s.request))
+                        .expect("benchmark requests are valid");
+                    black_box(score(decision));
+                });
+            },
+        );
     }
 
     group.finish();

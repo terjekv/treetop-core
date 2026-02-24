@@ -14,18 +14,12 @@ fn run_many(f: fn() -> usize) -> usize {
 
 #[library_benchmark]
 fn iai_query_user_small() -> usize {
-    run_many(|| {
-        bench_helpers::query_user_with_groups(0, 0)
-            .expect("benchmark query must build")
-    })
+    run_many(|| bench_helpers::query_user_with_groups(0, 0).expect("benchmark query must build"))
 }
 
 #[library_benchmark]
 fn iai_query_user_medium() -> usize {
-    run_many(|| {
-        bench_helpers::query_user_with_groups(20, 2)
-            .expect("benchmark query must build")
-    })
+    run_many(|| bench_helpers::query_user_with_groups(20, 2).expect("benchmark query must build"))
 }
 
 #[library_benchmark]
