@@ -5,7 +5,7 @@ use crate::labels::{LabelRegistryBuilder, RegexLabeler};
 use crate::snapshot_decision;
 use crate::types::AttrValue;
 use crate::types::{Decision::Allow, Decision::Deny, Group, Resource};
-use crate::{Action, PolicyEffectFilter, PolicyMatchReason, User};
+use crate::{Action, PolicyEffectFilter, PolicyMatchReason, RequestContext, User};
 use cedar_policy::{EntityUid, Schema};
 use regex::Regex;
 use yare::parameterized;

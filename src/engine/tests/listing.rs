@@ -309,6 +309,12 @@ fn test_list_policies_mirrors_evaluate_input_shape() {
         listed
             .matches()
             .iter()
+            .all(|m| m.reasons.contains(&PolicyMatchReason::ActionIn))
+    );
+    assert!(
+        listed
+            .matches()
+            .iter()
             .all(|m| m.reasons.contains(&PolicyMatchReason::ResourceIs))
     );
 }
@@ -399,11 +405,11 @@ fn test_list_policies_with_effect_consistent_with_evaluate_on_forbid_deny() {
         .list_policies_with_effect(&request, PolicyEffectFilter::Forbid)
         .unwrap();
 
-    // Listing is currently principal+resource scoped (not action scoped),
-    // so both forbid policies match this request shape.
-    assert_eq!(any.policies().len(), 3);
+    // Request-based listing applies action constraints, so only the matching
+    // forbid policy is returned for this action.
+    assert_eq!(any.policies().len(), 2);
     assert_eq!(permit.policies().len(), 1);
-    assert_eq!(forbid.policies().len(), 2);
+    assert_eq!(forbid.policies().len(), 1);
 }
 
 #[test]
@@ -446,6 +452,37 @@ forbid (
     assert_eq!(any.policies().len(), 2);
     assert_eq!(permit.policies().len(), 1);
     assert_eq!(forbid.policies().len(), 1);
+}
+
+#[test]
+fn test_list_policies_request_filters_on_action_constraint() {
+    let policy = r#"
+permit (
+    principal == User::"alice",
+    action == Action::"view",
+    resource == Photo::"p"
+);
+permit (
+    principal == User::"alice",
+    action == Action::"edit",
+    resource == Photo::"p"
+);
+"#;
+    let engine = PolicyEngine::new_from_str(policy).unwrap();
+    let request = Request {
+        principal: Principal::User(User::new("alice", None, None)),
+        action: Action::new("view", None),
+        resource: Resource::new("Photo", "p"),
+    };
+
+    let listed = engine.list_policies(&request).unwrap();
+    assert_eq!(listed.policies().len(), 1);
+    assert!(
+        listed
+            .matches()
+            .iter()
+            .all(|m| m.reasons.contains(&PolicyMatchReason::ActionEq))
+    );
 }
 
 #[test]

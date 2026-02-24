@@ -7,13 +7,16 @@ use std::time::{Duration, Instant, SystemTime};
 use std::vec;
 
 use crate::labels::LabelRegistry;
-use crate::policy_match::{matches_effect, principal_match_reason, resource_match_reason};
-use crate::query::{PrincipalQuery, ResourceQuery};
+use crate::policy_match::{
+    action_match_reason, matches_effect, principal_match_reason, resource_match_reason,
+};
+use crate::query::{ActionQuery, PrincipalQuery, ResourceQuery};
 use crate::timers::PhaseTimer;
 use crate::traits::CedarAtom;
 use crate::types::{
-    Decision, FromDecisionWithPolicy, PermitPolicies, PermitPolicy, PolicyEffectFilter,
-    PolicyMatchReason, PolicyVersion, Request, Resource, UserPolicies,
+    Decision, DecisionDiagnostics, FromDecisionWithPolicy, PermitPolicies, PermitPolicy,
+    PolicyEffectFilter, PolicyMatchReason, PolicyVersion, Request, RequestContext, Resource,
+    UserPolicies,
 };
 use crate::{Groups, Principal};
 use crate::{error::PolicyError, loader};
@@ -83,6 +86,7 @@ struct PolicySnapshot {
     set: PolicySet,
     version: PolicyVersion,
     permit_policies: HashMap<PolicyId, PermitPolicy>,
+    forbid_policy_ids: HashMap<PolicyId, String>,
     schema: Option<Arc<Schema>>,
 }
 
@@ -103,6 +107,7 @@ impl PolicySnapshot {
             None => loader::compile_policy(policy_text)?,
         };
         let permit_policies = loader::precompute_permit_policies(&set);
+        let forbid_policy_ids = loader::precompute_forbid_policy_ids(&set);
 
         let mut hasher = Sha256::new();
         hasher.update(policy_text.as_bytes());
@@ -115,6 +120,7 @@ impl PolicySnapshot {
                 loaded_at: humantime::format_rfc3339(SystemTime::now()).to_string(),
             },
             permit_policies,
+            forbid_policy_ids,
             schema,
         })
     }
@@ -150,6 +156,26 @@ fn extract_permit_policies(
         .collect()
 }
 
+/// Extract matched forbid policy IDs from a Cedar authorization result.
+#[inline]
+fn extract_forbid_policy_ids(
+    snapshot: &PolicySnapshot,
+    result: &cedar_policy::Response,
+) -> Vec<String> {
+    if result.decision() != cedar_policy::Decision::Deny {
+        return Vec::new();
+    }
+
+    let mut ids: Vec<String> = result
+        .diagnostics()
+        .reason()
+        .filter_map(|reason| snapshot.forbid_policy_ids.get(reason).cloned())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 /// Iterate over groups from a request principal.
 #[inline]
 fn request_groups(request: &Request) -> Option<&Groups> {
@@ -172,6 +198,29 @@ fn apply_labels(
     if let Some(registry) = registry {
         registry.apply(resource);
     }
+}
+
+/// Build the effective Cedar request context by merging resource context and
+/// optional request context.
+#[inline]
+fn build_effective_context(
+    resource: &crate::types::Resource,
+    request_context: Option<&RequestContext>,
+) -> Result<cedar_policy::Context, PolicyError> {
+    let base_context = resource.cedar_ctx()?;
+    let Some(request_context) = request_context else {
+        return Ok(base_context);
+    };
+    if request_context.is_empty() {
+        return Ok(base_context);
+    }
+
+    Ok(base_context.merge(
+        request_context
+            .iter()
+            .map(|(k, v)| (k.clone(), v.to_re()))
+            .collect::<Vec<_>>(),
+    )?)
 }
 
 /// Build a Cedar request from the authorization request and resource.
@@ -423,7 +472,11 @@ impl PolicyEngine {
     ///
     /// This separates request preparation from the authorization decision, making both
     /// more testable and the main hot path more readable.
-    fn prepare(&self, request: &Request) -> Result<PreparedRequest, PolicyError> {
+    fn prepare(
+        &self,
+        request: &Request,
+        request_context: Option<&RequestContext>,
+    ) -> Result<PreparedRequest, PolicyError> {
         let snapshot = self.current_snapshot();
         let schema = snapshot.schema();
         let mut timers = EvalTimers::start();
@@ -443,7 +496,7 @@ impl PolicyEngine {
         let principal_uid = request.principal.cedar_entity_uid()?;
         let action_uid = request.action.cedar_entity_uid()?;
         let resource_uid_original = request.resource.cedar_entity_uid()?;
-        let context_original = request.resource.cedar_ctx()?;
+        let context_original = build_effective_context(&request.resource, request_context)?;
 
         // Only clone and apply labels if a label registry is configured
         // We need to keep the potentially-modified resource for building entities
@@ -459,7 +512,7 @@ impl PolicyEngine {
             );
 
             let uid = resource.cedar_entity_uid()?;
-            let ctx = resource.cedar_ctx()?;
+            let ctx = build_effective_context(&resource, request_context)?;
             (uid, ctx, resource)
         } else {
             debug!(
@@ -585,8 +638,44 @@ impl PolicyEngine {
         )
     )]
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
+        Ok(self.evaluate_internal(request, None)?.decision)
+    }
+
+    /// Evaluate a request with explicit Cedar request context.
+    pub fn evaluate_with_context(
+        &self,
+        request: &Request,
+        request_context: &RequestContext,
+    ) -> Result<Decision, PolicyError> {
+        Ok(self
+            .evaluate_internal(request, Some(request_context))?
+            .decision)
+    }
+
+    /// Evaluate a request and include deny-side forbid diagnostics.
+    pub fn evaluate_with_diagnostics(
+        &self,
+        request: &Request,
+    ) -> Result<DecisionDiagnostics, PolicyError> {
+        self.evaluate_internal(request, None)
+    }
+
+    /// Evaluate a request with explicit context and include deny diagnostics.
+    pub fn evaluate_with_context_and_diagnostics(
+        &self,
+        request: &Request,
+        request_context: &RequestContext,
+    ) -> Result<DecisionDiagnostics, PolicyError> {
+        self.evaluate_internal(request, Some(request_context))
+    }
+
+    fn evaluate_internal(
+        &self,
+        request: &Request,
+        request_context: Option<&RequestContext>,
+    ) -> Result<DecisionDiagnostics, PolicyError> {
         // Prepare the request: apply labels, build entities, resolve groups
-        let mut prepared = self.prepare(request)?;
+        let mut prepared = self.prepare(request, request_context)?;
 
         // Perform authorization with RAII timing (using cached Authorizer)
         let result = {
@@ -619,6 +708,11 @@ impl PolicyEngine {
 
         // Extract all permit policies from the authorization result
         let permit_policies = extract_permit_policies(&prepared.snapshot, &result);
+        #[cfg(feature = "observability")]
+        let allow_policy_ids = permit_policies.ids();
+        let forbid_policy_ids = extract_forbid_policy_ids(&prepared.snapshot, &result);
+        let decision =
+            Decision::from_decision_with_policy(result.decision(), permit_policies, version);
 
         // Record metrics (no-op when no sink is configured or feature disabled)
         #[cfg(feature = "observability")]
@@ -628,7 +722,11 @@ impl PolicyEngine {
             let principal_id = request.principal.to_string();
             let action_id = request.action.to_string();
 
-            let matched_policies = permit_policies.ids();
+            let matched_policies = if allowed {
+                allow_policy_ids.clone()
+            } else {
+                forbid_policy_ids.clone()
+            };
 
             let stats = EvaluationStats {
                 duration: dur,
@@ -650,11 +748,10 @@ impl PolicyEngine {
             record_evaluation_phases(&stats, &phases);
         }
 
-        Ok(Decision::from_decision_with_policy(
-            result.decision(),
-            permit_policies,
-            version,
-        ))
+        Ok(DecisionDiagnostics {
+            decision,
+            matched_forbid_policy_ids: forbid_policy_ids,
+        })
     }
 
     /// List all policies applicable to a user.
@@ -722,6 +819,7 @@ impl PolicyEngine {
     ///
     /// This mirrors [`PolicyEngine::evaluate`] by accepting `&Request` and uses:
     /// - the request principal (including user group membership, if any)
+    /// - the request action
     /// - the request resource
     ///
     /// Effect filter defaults to `Any`; to filter by permit/forbid, use
@@ -737,9 +835,11 @@ impl PolicyEngine {
         effect_filter: PolicyEffectFilter,
     ) -> Result<UserPolicies, PolicyError> {
         let principal = PrincipalQuery::from_principal(&request.principal)?;
+        let action = ActionQuery::from_action(&request.action)?;
         self.list_policies_dispatch(
             &request.principal.to_string(),
             &principal,
+            Some(&action),
             Some(&request.resource),
             effect_filter,
         )
@@ -782,7 +882,7 @@ impl PolicyEngine {
         effect_filter: PolicyEffectFilter,
     ) -> Result<UserPolicies, PolicyError> {
         let principal = PrincipalQuery::for_user(user, groups, namespace)?;
-        self.list_policies_dispatch(user, &principal, resource, effect_filter)
+        self.list_policies_dispatch(user, &principal, None, resource, effect_filter)
     }
 
     /// List all policies applicable to a group principal.
@@ -833,13 +933,14 @@ impl PolicyEngine {
         effect_filter: PolicyEffectFilter,
     ) -> Result<UserPolicies, PolicyError> {
         let principal = PrincipalQuery::for_group(group, namespace)?;
-        self.list_policies_dispatch(group, &principal, resource, effect_filter)
+        self.list_policies_dispatch(group, &principal, None, resource, effect_filter)
     }
 
     fn list_policies_dispatch(
         &self,
         principal_id: &str,
         principal: &PrincipalQuery,
+        action: Option<&ActionQuery>,
         resource: Option<&Resource>,
         effect_filter: PolicyEffectFilter,
     ) -> Result<UserPolicies, PolicyError> {
@@ -862,6 +963,11 @@ impl PolicyEngine {
                 continue;
             };
 
+            let Some(action_reason) = action_match_reason(policy.action_constraint(), action)
+            else {
+                continue;
+            };
+
             let Some(resource_reason) =
                 resource_match_reason(policy.resource_constraint(), resource_query.as_ref())
             else {
@@ -869,6 +975,9 @@ impl PolicyEngine {
             };
 
             let mut reasons = vec![principal_reason];
+            if let Some(action_reason) = action_reason {
+                reasons.push(action_reason);
+            }
             if let Some(resource_reason) = resource_reason {
                 reasons.push(resource_reason);
             }

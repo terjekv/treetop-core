@@ -256,3 +256,62 @@ fn test_ip_functionality_errors(ip: &str) {
 
     assert!(engine.evaluate(&request).is_err());
 }
+
+#[test]
+fn test_evaluate_with_context_supports_context_conditions() {
+    let policy = r#"
+permit (
+    principal == User::"alice",
+    action == Action::"deploy",
+    resource == Service::"backend"
+) when {
+    context.env == "prod" && context.ticket > 1000
+};
+"#;
+    let engine = PolicyEngine::new_from_str(policy).unwrap();
+    let request = Request {
+        principal: Principal::User(User::new("alice", None, None)),
+        action: Action::new("deploy", None),
+        resource: Resource::new("Service", "backend"),
+    };
+
+    let without_context = engine.evaluate(&request).unwrap();
+    assert!(matches!(without_context, Deny { .. }));
+
+    let context = RequestContext::new()
+        .with_attr("env", AttrValue::String("prod".to_string()))
+        .with_attr("ticket", AttrValue::Long(1337));
+    let with_context = engine.evaluate_with_context(&request, &context).unwrap();
+    assert!(matches!(with_context, Allow { .. }));
+}
+
+#[test]
+fn test_evaluate_with_diagnostics_reports_forbid_ids() {
+    let policy = r#"
+@id("allow_alice_read")
+permit (
+    principal == User::"alice",
+    action == Action::"read",
+    resource == Document::"doc1"
+);
+@id("deny_alice_read")
+forbid (
+    principal == User::"alice",
+    action == Action::"read",
+    resource == Document::"doc1"
+);
+"#;
+    let engine = PolicyEngine::new_from_str(policy).unwrap();
+    let request = Request {
+        principal: Principal::User(User::new("alice", None, None)),
+        action: Action::new("read", None),
+        resource: Resource::new("Document", "doc1"),
+    };
+
+    let diagnostics = engine.evaluate_with_diagnostics(&request).unwrap();
+    assert!(matches!(diagnostics.decision, Deny { .. }));
+    assert_eq!(
+        diagnostics.matched_forbid_policy_ids,
+        vec!["deny_alice_read".to_string()]
+    );
+}

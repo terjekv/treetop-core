@@ -76,6 +76,48 @@ fn test_schema_rejects_unknown_action_in_request() {
 }
 
 #[test]
+fn test_schema_validates_request_context_types() {
+    let schema = r#"
+entity User;
+entity Document {
+    id: String,
+    sensitivity: Long
+};
+action "read" appliesTo {
+    principal: [User],
+    resource: [Document],
+    context: {
+        ticket: Long
+    }
+};
+"#;
+    let policy = r#"
+permit (
+    principal == User::"alice",
+    action == Action::"read",
+    resource is Document
+) when {
+    context.ticket > 0
+};
+"#;
+    let engine = schema_engine_from_policy(policy, schema);
+    let request = user_request("alice", "read", document_with_sensitivity("doc1", 1));
+
+    let good_context = RequestContext::new().with_attr("ticket", AttrValue::Long(7));
+    let decision = engine
+        .evaluate_with_context(&request, &good_context)
+        .unwrap();
+    assert_allow(&decision);
+
+    let bad_context = RequestContext::new().with_attr("ticket", AttrValue::String("oops".into()));
+    let result = engine.evaluate_with_context(&request, &bad_context);
+    assert!(matches!(
+        result,
+        Err(PolicyError::RequestValidationError(_))
+    ));
+}
+
+#[test]
 fn test_reload_preserves_schema_validation() {
     let engine = schema_engine_from_policy(TEST_SCHEMA_POLICY, TEST_SCHEMA);
     let invalid_policy = r#"

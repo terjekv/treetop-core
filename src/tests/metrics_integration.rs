@@ -475,11 +475,11 @@ fn test_matched_policies_tracking() {
         matched_policies[1]
     );
 
-    // Charlie's evaluation should have no matched permit policies (forbid doesn't count)
-    // Forbid policies don't show up in permit_policies, only in Cedar's decision
-    assert!(
-        matched_policies[2].is_empty(),
-        "Charlie's evaluation should have no matched permit policies (forbid policy), got: {:?}",
+    // Charlie's deny should include the matching forbid policy ID.
+    assert_eq!(
+        matched_policies[2],
+        vec!["forbid_charlie_delete"],
+        "Charlie's evaluation should include forbid policy id, got: {:?}",
         matched_policies[2]
     );
 

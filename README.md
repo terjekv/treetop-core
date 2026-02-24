@@ -155,6 +155,24 @@ let policies = engine.list_policies_for_user("alice", &[], &[]).unwrap();
  let json = serde_json::to_string(&policies).unwrap();
 ```
 
+If your Cedar policies use `context`, pass it explicitly at evaluation time:
+
+```rust
+use treetop_core::{AttrValue, RequestContext};
+
+let context = RequestContext::new()
+    .with_attr("env", AttrValue::String("prod".into()))
+    .with_attr("ticket", AttrValue::Long(1234));
+
+let decision = engine.evaluate_with_context(&request, &context).unwrap();
+```
+
+Conceptually, `context` and entity attributes solve different problems:
+
+- Use entity attributes (`resource.<field>`, principal/group attributes) for facts that belong to the entity itself and are part of its modeled state.
+- Use request `context` (`context.<field>`) for transient, per-request inputs that do not belong on the entity, such as ticket numbers, environment, or request metadata.
+- A useful rule of thumb: if the value should still be true when you evaluate a different request tomorrow, it is usually an entity attribute; if it only matters for this authorization attempt, it is usually request context.
+
 ## Cedar Schema Validation
 
 Schema validation is optional and opt-in. Existing `PolicyEngine::new_from_str(...)`
