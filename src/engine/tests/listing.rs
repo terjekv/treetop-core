@@ -1,3 +1,5 @@
+use super::*;
+
 #[parameterized(
         alice_permissions = { "alice", vec![], 2, vec!["create_host", "delete", "edit", "view"] },
         bob_permissions = { "bob", vec![], 1, vec!["view"] },

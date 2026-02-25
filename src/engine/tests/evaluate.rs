@@ -1,3 +1,5 @@
+use super::*;
+
 #[parameterized(
         alice_edit_allow = { "alice", "edit", "VacationPhoto94.jpg" },
         alice_view_allow = { "alice", "view", "VacationPhoto94.jpg" },

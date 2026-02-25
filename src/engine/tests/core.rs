@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn test_current_version_hash() {
     let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();

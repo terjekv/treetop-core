@@ -342,6 +342,6 @@ fn assert_deny(decision: &Decision) {
     assert!(matches!(decision, Decision::Deny { .. }));
 }
 
-include!("core.rs");
-include!("evaluate.rs");
-include!("listing.rs");
+mod core;
+mod evaluate;
+mod listing;
