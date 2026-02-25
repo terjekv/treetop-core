@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Cedar schema support now documents and supports schema replacement during reload via:
+  - `PolicyEngine::reload_from_str_with_schema(...)`
+  - `PolicyEngine::reload_from_str_with_cedarschema(...)`
+- Expanded schema/reload test coverage:
+  - Reload failure atomicity tests (snapshot/version/behavior unchanged on failed reload)
+  - Non-schema engine -> schema-enabled reload transition test
+
+### Changed
+
+- `PolicyReload` tracing remains at `debug` level, with schema-status fields:
+  - `schema_enabled`
+  - `schema_reloaded`
+  - `schema_previously_enabled` (schema-replacing reloads)
+- Engine unit tests were refactored out of `src/engine.rs` into `src/engine/tests/*` and split by domain for maintainability (`core`, `evaluate`, `listing`, `reload`, `schema`).
+
 ## [0.0.16] - 2026-02-09
 
 ### Added

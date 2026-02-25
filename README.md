@@ -212,6 +212,30 @@ With schema validation enabled:
   violates schema `appliesTo`
 - entity construction fails when attributes do not conform to schema types
 
+You can also replace the schema during reload:
+
+```rust
+use cedar_policy::Schema;
+use treetop_core::PolicyEngine;
+
+let engine = PolicyEngine::new_from_str_with_cedarschema(policies, schema_text).unwrap();
+
+// Replace policies + schema in one atomic reload.
+let new_schema: Schema = new_schema_text.parse().unwrap();
+engine
+    .reload_from_str_with_schema(new_policies, new_schema)
+    .unwrap();
+
+// Or parse schema text inside the reload call.
+engine
+    .reload_from_str_with_cedarschema(new_policies, new_schema_text)
+    .unwrap();
+```
+
+Reload logging:
+- reload operations emit a `PolicyReload` debug event
+- fields include `schema_enabled`, `schema_reloaded`, and when relevant `schema_previously_enabled`
+
 ## Groups
 
 Groups are listed as the principal entity type `Group`, and to permit access to member of a group, you can use the `in` operator. If you say `principal in Group::"admins"`, it will match any principal that is a member of the group `admins`, but if you say `principal == Group::"admins"`, it will only match the group itself, not its members. You will almost always want to use the `in` operator when dealing with groups...
