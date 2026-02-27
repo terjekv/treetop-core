@@ -11,7 +11,7 @@ permissions:
 jobs:
   bench:
     name: PR Bench
-    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@v2
+    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@32029e319afd075c29d7288270f329269f82188b
     with:
       backend: all
       benchmarks_json: >-
