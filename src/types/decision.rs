@@ -178,6 +178,14 @@ pub enum Decision {
     },
 }
 
+/// Authorization decision plus deny-side forbid diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
+pub struct DecisionDiagnostics {
+    pub decision: Decision,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub matched_forbid_policy_ids: Vec<String>,
+}
+
 impl Display for Decision {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
@@ -486,5 +494,20 @@ mod tests {
         assert_eq!(collected.len(), 2);
         assert_eq!(collected[0].cedar_id, policy1.cedar_id);
         assert_eq!(collected[1].cedar_id, policy2.cedar_id);
+    }
+
+    #[test]
+    fn test_decision_diagnostics_serialization() {
+        let version = PolicyVersion {
+            hash: "abc123".to_string(),
+            loaded_at: "2023-01-01T00:00:00Z".to_string(),
+        };
+        let diagnostics = DecisionDiagnostics {
+            decision: Decision::Deny { version },
+            matched_forbid_policy_ids: vec!["deny_delete".to_string()],
+        };
+
+        let serialized = serde_json::to_value(&diagnostics).unwrap();
+        assert_eq!(serialized["matched_forbid_policy_ids"][0], "deny_delete");
     }
 }

@@ -111,7 +111,10 @@ pub fn policy_match_resource_is_in() -> u8 {
         .unwrap_or(0)
 }
 
-pub fn query_user_with_groups(group_count: usize, namespace_depth: usize) -> Result<usize, PolicyError> {
+pub fn query_user_with_groups(
+    group_count: usize,
+    namespace_depth: usize,
+) -> Result<usize, PolicyError> {
     let groups: Vec<String> = (0..group_count).map(|idx| format!("group_{idx}")).collect();
     let group_refs: Vec<&str> = groups.iter().map(|g| g.as_str()).collect();
 

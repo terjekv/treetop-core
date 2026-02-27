@@ -155,6 +155,87 @@ let policies = engine.list_policies_for_user("alice", &[], &[]).unwrap();
  let json = serde_json::to_string(&policies).unwrap();
 ```
 
+If your Cedar policies use `context`, pass it explicitly at evaluation time:
+
+```rust
+use treetop_core::{AttrValue, RequestContext};
+
+let context = RequestContext::new()
+    .with_attr("env", AttrValue::String("prod".into()))
+    .with_attr("ticket", AttrValue::Long(1234));
+
+let decision = engine.evaluate_with_context(&request, &context).unwrap();
+```
+
+Conceptually, `context` and entity attributes solve different problems:
+
+- Use entity attributes (`resource.<field>`, principal/group attributes) for facts that belong to the entity itself and are part of its modeled state.
+- Use request `context` (`context.<field>`) for transient, per-request inputs that do not belong on the entity, such as ticket numbers, environment, or request metadata.
+- A useful rule of thumb: if the value should still be true when you evaluate a different request tomorrow, it is usually an entity attribute; if it only matters for this authorization attempt, it is usually request context.
+
+## Cedar Schema Validation
+
+Schema validation is optional and opt-in. Existing `PolicyEngine::new_from_str(...)`
+and `reload_from_str(...)` behavior is unchanged and remains schema-free.
+
+When you want schema enforcement:
+
+```rust
+use treetop_core::PolicyEngine;
+
+let policies = r#"
+permit (
+    principal == User::"alice",
+    action == Action::"read",
+    resource is Document
+);
+"#;
+
+let schema = r#"
+entity User;
+entity Document;
+action "read" appliesTo {
+    principal: [User],
+    resource: [Document],
+};
+"#;
+
+let engine = PolicyEngine::new_from_str_with_cedarschema(policies, schema).unwrap();
+
+// Re-uses the same schema already loaded in the engine
+engine.reload_from_str(policies).unwrap();
+```
+
+With schema validation enabled:
+- policy load/reload fails if policies do not type-check against the schema
+- request evaluation fails with `RequestValidationError` when principal/action/resource
+  violates schema `appliesTo`
+- entity construction fails when attributes do not conform to schema types
+
+You can also replace the schema during reload:
+
+```rust
+use cedar_policy::Schema;
+use treetop_core::PolicyEngine;
+
+let engine = PolicyEngine::new_from_str_with_cedarschema(policies, schema_text).unwrap();
+
+// Replace policies + schema in one atomic reload.
+let new_schema: Schema = new_schema_text.parse().unwrap();
+engine
+    .reload_from_str_with_schema(new_policies, new_schema)
+    .unwrap();
+
+// Or parse schema text inside the reload call.
+engine
+    .reload_from_str_with_cedarschema(new_policies, new_schema_text)
+    .unwrap();
+```
+
+Reload logging:
+- reload operations emit a `PolicyReload` debug event
+- fields include `schema_enabled`, `schema_reloaded`, and when relevant `schema_previously_enabled`
+
 ## Groups
 
 Groups are listed as the principal entity type `Group`, and to permit access to member of a group, you can use the `in` operator. If you say `principal in Group::"admins"`, it will match any principal that is a member of the group `admins`, but if you say `principal == Group::"admins"`, it will only match the group itself, not its members. You will almost always want to use the `in` operator when dealing with groups...

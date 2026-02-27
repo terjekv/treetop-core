@@ -98,7 +98,8 @@ pub fn build_scenario(spec: ScenarioSpec) -> Scenario {
         .collect();
 
     let policy_text = build_policy_text(spec);
-    let mut engine = PolicyEngine::new_from_str(&policy_text).expect("benchmark policy must compile");
+    let mut engine =
+        PolicyEngine::new_from_str(&policy_text).expect("benchmark policy must compile");
 
     if let Some(registry) = build_registry(spec.labelers) {
         engine = engine.with_label_registry(registry);
@@ -277,10 +278,7 @@ pub fn wide_matrix_specs_labels() -> Vec<ScenarioSpec> {
         .filter(|spec| {
             matches!(
                 spec.name,
-                "m_labels_5"
-                    | "m_labels_20"
-                    | "m_labels_20_groups_20"
-                    | "l_labels_20_groups_40"
+                "m_labels_5" | "m_labels_20" | "m_labels_20_groups_20" | "l_labels_20_groups_40"
             )
         })
         .collect()
@@ -289,7 +287,12 @@ pub fn wide_matrix_specs_labels() -> Vec<ScenarioSpec> {
 pub fn wide_matrix_specs_namespaced() -> Vec<ScenarioSpec> {
     wide_matrix_specs_all()
         .into_iter()
-        .filter(|spec| matches!(spec.name, "m_namespaced_depth_2" | "m_namespaced_depth_4_deny"))
+        .filter(|spec| {
+            matches!(
+                spec.name,
+                "m_namespaced_depth_2" | "m_namespaced_depth_4_deny"
+            )
+        })
         .collect()
 }
 

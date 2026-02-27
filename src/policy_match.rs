@@ -1,6 +1,6 @@
-use cedar_policy::{Effect, PrincipalConstraint, ResourceConstraint};
+use cedar_policy::{ActionConstraint, Effect, PrincipalConstraint, ResourceConstraint};
 
-use crate::query::{PrincipalQuery, ResourceQuery};
+use crate::query::{ActionQuery, PrincipalQuery, ResourceQuery};
 use crate::types::{PolicyEffectFilter, PolicyMatchReason};
 
 pub(crate) fn principal_match_reason(
@@ -54,6 +54,24 @@ pub(crate) fn resource_match_reason(
         {
             Some(Some(PolicyMatchReason::ResourceIsIn))
         }
+        _ => None,
+    }
+}
+
+pub(crate) fn action_match_reason(
+    constraint: ActionConstraint,
+    action: Option<&ActionQuery>,
+) -> Option<Option<PolicyMatchReason>> {
+    let Some(action) = action else {
+        return Some(None);
+    };
+
+    match constraint {
+        ActionConstraint::Eq(uid) if uid == action.uid => Some(Some(PolicyMatchReason::ActionEq)),
+        ActionConstraint::In(uids) if uids.contains(&action.uid) => {
+            Some(Some(PolicyMatchReason::ActionIn))
+        }
+        ActionConstraint::Any => Some(Some(PolicyMatchReason::ActionAny)),
         _ => None,
     }
 }

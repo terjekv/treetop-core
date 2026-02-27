@@ -1,6 +1,6 @@
 mod evaluate_common;
 
-use evaluate_common::{build_scenario, iai_matrix_specs_namespaced, Scenario};
+use evaluate_common::{Scenario, build_scenario, iai_matrix_specs_namespaced};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 use std::sync::LazyLock;

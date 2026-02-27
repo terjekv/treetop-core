@@ -4,7 +4,7 @@ use cedar_policy::EntityUid;
 
 use crate::error::PolicyError;
 use crate::traits::CedarAtom;
-use crate::types::{Principal, Resource, group_entity_uid, user_entity_uid};
+use crate::types::{Action, Principal, Resource, group_entity_uid, user_entity_uid};
 
 #[derive(Debug)]
 pub(crate) struct PrincipalQuery {
@@ -84,6 +84,19 @@ impl ResourceQuery {
         Ok(Self {
             uid,
             type_name: resource.kind().to_string(),
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ActionQuery {
+    pub(crate) uid: EntityUid,
+}
+
+impl ActionQuery {
+    pub(crate) fn from_action(action: &Action) -> Result<Self, PolicyError> {
+        Ok(Self {
+            uid: action.cedar_entity_uid()?,
         })
     }
 }

@@ -92,15 +92,16 @@
 //!
 
 pub use build_info::build_info;
+pub use cedar_policy::Schema;
 pub use engine::PolicyEngine;
 pub use error::PolicyError;
 pub use labels::{LabelRegistry, LabelRegistryBuilder, Labeler, RegexLabeler};
-pub use loader::compile_policy;
+pub use loader::{compile_policy, compile_policy_with_schema};
 pub use types::{
-    Action, AttrValue, CedarType, Decision, Group, Groups, PermitPolicies, PermitPolicy,
-    PolicyEffectFilter, PolicyMatch, PolicyMatchReason, PolicyVersion, Principal, Request,
-    Resource, User, UserPolicies,
-    action_entity_uid, group_entity_uid, namespace_segments, resource_entity_uid, user_entity_uid,
+    Action, AttrValue, CedarType, Decision, DecisionDiagnostics, Group, Groups, PermitPolicies,
+    PermitPolicy, PolicyEffectFilter, PolicyMatch, PolicyMatchReason, PolicyVersion, Principal,
+    Request, RequestContext, Resource, User, UserPolicies, action_entity_uid, group_entity_uid,
+    namespace_segments, resource_entity_uid, user_entity_uid,
 };
 
 #[cfg(feature = "observability")]

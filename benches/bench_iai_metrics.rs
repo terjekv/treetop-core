@@ -11,7 +11,9 @@ fn iai_metrics_record_evaluation() -> u64 {
 
 #[library_benchmark]
 fn iai_metrics_record_phases() -> u64 {
-    black_box(bench_helpers::metrics_record_evaluation_phases(IAI_INNER_ITERS))
+    black_box(bench_helpers::metrics_record_evaluation_phases(
+        IAI_INNER_ITERS,
+    ))
 }
 
 #[library_benchmark]

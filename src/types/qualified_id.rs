@@ -97,7 +97,8 @@ mod tests {
 
     #[test]
     fn test_qualified_id_namespace_accessor() {
-        let id: UserId = QualifiedId::new("alice", Some(vec!["App".to_string(), "Core".to_string()]));
+        let id: UserId =
+            QualifiedId::new("alice", Some(vec!["App".to_string(), "Core".to_string()]));
         assert_eq!(id.namespace(), &["App".to_string(), "Core".to_string()]);
     }
 
@@ -110,8 +111,18 @@ mod tests {
 
     #[test]
     fn test_qualified_id_multiple_namespaces() {
-        let id: ActionId = QualifiedId::new("delete", Some(vec!["App".to_string(), "Admin".to_string(), "Actions".to_string()]));
-        assert_eq!(id.fmt_qualified("Action"), r#"App::Admin::Actions::Action::"delete""#);
+        let id: ActionId = QualifiedId::new(
+            "delete",
+            Some(vec![
+                "App".to_string(),
+                "Admin".to_string(),
+                "Actions".to_string(),
+            ]),
+        );
+        assert_eq!(
+            id.fmt_qualified("Action"),
+            r#"App::Admin::Actions::Action::"delete""#
+        );
     }
 
     #[test]
@@ -125,7 +136,7 @@ mod tests {
         let user_id: UserId = QualifiedId::new("alice", None);
         let group_id: GroupId = QualifiedId::new("admins", None);
         let action_id: ActionId = QualifiedId::new("read", None);
-        
+
         assert_eq!(user_id.id(), "alice");
         assert_eq!(group_id.id(), "admins");
         assert_eq!(action_id.id(), "read");
