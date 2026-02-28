@@ -9,28 +9,35 @@ permissions:
   pull-requests: write
 
 jobs:
-  iai-callgrind:
-    name: iai-callgrind PR Bench
-    uses: terjekv/github-action-iai-callgrind/.github/workflows/iai-callgrind-pr-bench.yml@v1
+  bench:
+    name: PR Bench
+    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@v2
     with:
+      backend: all
       benchmarks_json: >-
         [
-          "evaluate_iai_baseline",
-          "evaluate_iai_groups",
-          "evaluate_iai_labels",
-          "evaluate_iai_namespaced",
-          "bench_iai_loader",
-          "bench_iai_policy_match",
-          "bench_iai_query",
-          "bench_iai_entity_uid",
-          "bench_iai_attr_value",
-          "bench_iai_metrics",
-          "bench_iai_timers"
+          {"name":"evaluate_criterion_baseline","bench":"evaluate_criterion_baseline","backend":"criterion"},
+          {"name":"evaluate_criterion_groups","bench":"evaluate_criterion_groups","backend":"criterion"},
+          {"name":"evaluate_criterion_labels","bench":"evaluate_criterion_labels","backend":"criterion"},
+          {"name":"evaluate_criterion_namespaced","bench":"evaluate_criterion_namespaced","backend":"criterion"},
+          {"name":"evaluate_iai_baseline","bench":"evaluate_iai_baseline","backend":"iai-callgrind"},
+          {"name":"evaluate_iai_groups","bench":"evaluate_iai_groups","backend":"iai-callgrind"},
+          {"name":"evaluate_iai_labels","bench":"evaluate_iai_labels","backend":"iai-callgrind"},
+          {"name":"evaluate_iai_namespaced","bench":"evaluate_iai_namespaced","backend":"iai-callgrind"},
+          {"name":"bench_iai_loader","bench":"bench_iai_loader","backend":"iai-callgrind"},
+          {"name":"bench_iai_policy_match","bench":"bench_iai_policy_match","backend":"iai-callgrind"},
+          {"name":"bench_iai_query","bench":"bench_iai_query","backend":"iai-callgrind"},
+          {"name":"bench_iai_entity_uid","bench":"bench_iai_entity_uid","backend":"iai-callgrind"},
+          {"name":"bench_iai_attr_value","bench":"bench_iai_attr_value","backend":"iai-callgrind"},
+          {"name":"bench_iai_metrics","bench":"bench_iai_metrics","backend":"iai-callgrind"},
+          {"name":"bench_iai_timers","bench":"bench_iai_timers","backend":"iai-callgrind"}
         ]
       feature_sets_json: >-
         [
           {"name":"no-obs","features":"bench-internal"},
           {"name":"obs","features":"bench-internal,observability"}
         ]
-      regression_threshold_pct: 8
+      criterion_statistic: median
+      regression_threshold_pct_iai_callgrind: 8
+      regression_threshold_pct_criterion: 10
       fail_on_regression: true
