@@ -13,7 +13,7 @@ keywords = ["cedar", "policy", "authentication"]
 cedar-policy = "4.9"
 cedar-policy-core = "4.9"
 humantime = "2"
-sha2 = "0.10"
+sha2 = "0.11"
 insta = { version = "1", features = ["json", "serde", "redactions"] }
 itertools = "0.14"
 regex = "1.12"
