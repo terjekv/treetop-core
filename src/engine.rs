@@ -111,7 +111,14 @@ impl PolicySnapshot {
 
         let mut hasher = Sha256::new();
         hasher.update(policy_text.as_bytes());
-        let hash = format!("{:x}", hasher.finalize());
+        let hash = hasher
+            .finalize()
+            .iter()
+            .fold(String::with_capacity(64), |mut s, b| {
+                use std::fmt::Write;
+                write!(s, "{b:02x}").unwrap();
+                s
+            });
 
         Ok(PolicySnapshot {
             set,
