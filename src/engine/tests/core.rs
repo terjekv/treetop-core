@@ -5,7 +5,13 @@ fn test_current_version_hash() {
     let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
     let version = engine.current_version();
 
-    let expected_hash = format!("{:x}", Sha256::digest(TEST_POLICY.as_bytes()));
+    let expected_hash = Sha256::digest(TEST_POLICY.as_bytes())
+        .iter()
+        .fold(String::with_capacity(64), |mut s, b| {
+            use std::fmt::Write;
+            write!(s, "{b:02x}").unwrap();
+            s
+        });
     assert_eq!(version.hash, expected_hash);
 }
 

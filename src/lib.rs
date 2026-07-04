@@ -60,7 +60,14 @@
 //! let json = serde_json::to_string(&alice_policies).unwrap();
 //!
 //! // Check that the policy running is the expected version
-//! assert_eq!(engine.current_version().hash, format!("{:x}", Sha256::digest(policies)));
+//! let expected_hash = Sha256::digest(policies)
+//!     .iter()
+//!     .fold(String::with_capacity(64), |mut s, b| {
+//!         use std::fmt::Write;
+//!         write!(s, "{b:02x}").unwrap();
+//!         s
+//!     });
+//! assert_eq!(engine.current_version().hash, expected_hash);
 //!
 //! ```
 //!

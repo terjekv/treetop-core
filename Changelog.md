@@ -5,13 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.18] - 2026-07-04
+
+### Changed
+
+- Bumped `cedar-policy` and `cedar-policy-core` dependencies to version 4.11.2.
+- Updated Cargo dependencies to their latest Rust 1.96-compatible versions.
+- Updated `vergen` and `vergen-gitcl` build dependencies to version 10 and migrated `build.rs` to the new builder API.
+
+## [0.0.17] - 2026-04-04
 
 ### Added
 
+- **Request Context Support**:
+  - `RequestContext` struct for passing arbitrary key-value context attributes to Cedar evaluation, merged with resource context at evaluation time
+  - `PolicyEngine::evaluate_with_context()` to evaluate with explicit request context
+  - `PolicyEngine::evaluate_with_context_and_diagnostics()` to evaluate with both context and diagnostics
+- **Decision Diagnostics**:
+  - `DecisionDiagnostics` struct wrapping `Decision` with deny-side forbid policy IDs (`matched_forbid_policy_ids`)
+  - `PolicyEngine::evaluate_with_diagnostics()` to include matched forbid policy IDs on deny decisions
+  - Forbid policy IDs are now precomputed at load time for efficient diagnostics
+- **Schema-Validated Engine Construction**:
+  - `PolicyEngine::new_from_str_with_schema()` to create an engine with schema-based policy and request validation
+  - `PolicyEngine::new_from_str_with_cedarschema()` to create an engine from policy text and Cedar schema text
 - Cedar schema support now documents and supports schema replacement during reload via:
   - `PolicyEngine::reload_from_str_with_schema(...)`
   - `PolicyEngine::reload_from_str_with_cedarschema(...)`
+- **Action Matching in Policy Listings**:
+  - `list_policies()` and `list_policies_with_effect()` now match action constraints in addition to principal and resource constraints
+- **New Public Exports**:
+  - `RequestContext`, `DecisionDiagnostics`, `compile_policy_with_schema`, and `Schema` (re-exported from `cedar_policy`)
 - Expanded schema/reload test coverage:
   - Reload failure atomicity tests (snapshot/version/behavior unchanged on failed reload)
   - Non-schema engine -> schema-enabled reload transition test
@@ -24,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `schema_previously_enabled` (schema-replacing reloads)
 - Engine unit tests were refactored out of `src/engine.rs` into `src/engine/tests/*` and split by domain for maintainability (`core`, `evaluate`, `listing`, `reload`, `schema`).
 - Bumped `cedar-policy` and `cedar-policy-core` dependencies to version 4.9.0.
+- Bumped `sha2` from 0.10 to 0.11.
 
 ## [0.0.16] - 2026-02-09
 
