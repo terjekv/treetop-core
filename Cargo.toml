@@ -1,6 +1,6 @@
 [package]
 name = "treetop-core"
-version = "0.0.17"
+version = "0.0.18"
 edition = "2024"
 license = "MIT"
 description = "Core library for Treetop, a Cedar policy engine implementation."
@@ -10,12 +10,12 @@ readme = "README.md"
 keywords = ["cedar", "policy", "authentication"]
 
 [dependencies]
-cedar-policy = "4.9"
-cedar-policy-core = "4.9"
+cedar-policy = "4.11.2"
+cedar-policy-core = "4.11.2"
 humantime = "2"
 sha2 = "0.11"
 insta = { version = "1", features = ["json", "serde", "redactions"] }
-itertools = "0.14"
+itertools = "0.15"
 regex = "1.12"
 serde = { version = "1.0", features = ["derive", "serde_derive"] }
 serde_json = "1.0"
@@ -28,17 +28,19 @@ yare = "3.0"
 arc-swap = "1"
 
 [build-dependencies]
-vergen = { version = "9", features = [
+vergen = { version = "10", features = [
     "emit_and_set",
     "build",
     "cargo",
+    "cargo_metadata",
     "rustc",
     "si",
 ] }
-vergen-gitcl = { version = "9", features = [
+vergen-gitcl = { version = "10", features = [
     "emit_and_set",
     "build",
     "cargo",
+    "cargo_metadata",
     "rustc",
     "si",
 ] }

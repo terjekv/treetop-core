@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.18] - 2026-07-04
+
+### Changed
+
+- Bumped `cedar-policy` and `cedar-policy-core` dependencies to version 4.11.2.
+- Updated Cargo dependencies to their latest Rust 1.96-compatible versions.
+- Updated `vergen` and `vergen-gitcl` build dependencies to version 10 and migrated `build.rs` to the new builder API.
+
 ## [0.0.17] - 2026-04-04
 
 ### Added
