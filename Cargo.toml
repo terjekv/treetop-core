@@ -57,7 +57,7 @@ bench-internal = []
 criterion = "0.8"
 iai-callgrind = "0.16"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-serial_test = "3"
+serial_test = "4"
 
 [[example]]
 name = "prometheus_sink"
