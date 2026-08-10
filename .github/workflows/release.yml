@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Verify release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Verify tag and release commit
+        shell: bash
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "treetop-core") | .version')"
+          expected_tag="v${version}"
+
+          if [[ "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}." >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          release_commit="$(git rev-list -n 1 "${GITHUB_REF_NAME}")"
+          if ! git merge-base --is-ancestor "${release_commit}" origin/main; then
+            echo "Release commit ${release_commit} is not on origin/main." >&2
+            exit 1
+          fi
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy
+        run: cargo clippy --locked --all-features
+
+      - name: Run tests
+        run: cargo test --locked --all-features
+
+      - name: Verify package
+        run: cargo publish --locked --dry-run
+
+  publish:
+    name: Publish treetop-core
+    runs-on: ubuntu-latest
+    needs: verify
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check whether this version is already published
+        id: published
+        shell: bash
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "treetop-core") | .version')"
+          probe_dir="$(mktemp -d)"
+          mkdir -p "${probe_dir}/src"
+          touch "${probe_dir}/src/lib.rs"
+          printf '%s\n' \
+            '[package]' \
+            'name = "treetop-core-release-probe"' \
+            'version = "0.0.0"' \
+            'edition = "2024"' \
+            '' \
+            '[dependencies]' \
+            "treetop-core = \"=${version}\"" \
+            > "${probe_dir}/Cargo.toml"
+
+          if cargo metadata --manifest-path "${probe_dir}/Cargo.toml" \
+            --format-version 1 >/dev/null 2>&1; then
+            echo "published=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "published=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Authenticate to crates.io
+        if: steps.published.outputs.published != 'true'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish treetop-core
+        if: steps.published.outputs.published != 'true'
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Report existing release
+        if: steps.published.outputs.published == 'true'
+        run: echo "treetop-core ${GITHUB_REF_NAME#v} is already published; nothing to do."
