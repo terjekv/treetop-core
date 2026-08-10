@@ -1,9 +1,8 @@
 use cedar_policy::{
     ContextCreationError, EntityAttrEvaluationError, ParseErrors, RequestValidationError,
+    entities_errors::EntitiesError,
 };
-use cedar_policy_core::entities::err::EntitiesError;
 use serde::{Deserialize, Serialize};
-use std::sync::{PoisonError, RwLockReadGuard};
 use thiserror::Error;
 
 /// Policy evaluation and validation errors.
@@ -12,11 +11,8 @@ use thiserror::Error;
 /// errors. Call sites attach human-friendly context where possible.
 /// For example, `EntityAttrError` wraps attribute access failures.
 #[derive(Debug, Error, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PolicyError {
-    /// Failed to acquire lock on policy set.
-    #[error("failed to lock policy set for read/write: {0}")]
-    LockError(String),
-
     /// Failed to parse Cedar policy text.
     #[error("failed to parse policy: {0}")]
     ParseError(String),
@@ -36,14 +32,6 @@ pub enum PolicyError {
     /// Error creating or manipulating Cedar entities.
     #[error("entity error: {0}")]
     EntityError(String),
-
-    /// Synchronization error (RwLock or similar poisoned).
-    #[error("poisoned lock error: {0}")]
-    PoisonedLockError(String),
-
-    /// Error with qualified identifiers (malformed namespace or ID).
-    #[error("qualified ID error: {0}")]
-    QualifiedIdError(String),
 
     /// Invalid format for a Cedar construct (string parsing failure).
     #[error("invalid format: {0}")]
@@ -81,11 +69,5 @@ impl From<EntityAttrEvaluationError> for PolicyError {
 impl From<EntitiesError> for PolicyError {
     fn from(err: EntitiesError) -> Self {
         PolicyError::EntityError(err.to_string())
-    }
-}
-
-impl From<PoisonError<RwLockReadGuard<'_, cedar_policy::PolicySet>>> for PolicyError {
-    fn from(err: PoisonError<RwLockReadGuard<'_, cedar_policy::PolicySet>>) -> Self {
-        PolicyError::PoisonedLockError(err.to_string())
     }
 }

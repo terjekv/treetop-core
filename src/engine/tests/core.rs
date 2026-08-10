@@ -5,14 +5,15 @@ fn test_current_version_hash() {
     let engine = PolicyEngine::new_from_str(TEST_POLICY).unwrap();
     let version = engine.current_version();
 
-    let expected_hash = Sha256::digest(TEST_POLICY.as_bytes())
-        .iter()
-        .fold(String::with_capacity(64), |mut s, b| {
+    let expected_hash = Sha256::digest(TEST_POLICY.as_bytes()).iter().fold(
+        String::with_capacity(64),
+        |mut s, b| {
             use std::fmt::Write;
             write!(s, "{b:02x}").unwrap();
             s
-        });
-    assert_eq!(version.hash, expected_hash);
+        },
+    );
+    assert_eq!(version.hash.as_ref(), expected_hash);
 }
 
 #[test]
@@ -435,7 +436,7 @@ fn test_multiple_policies_captured() {
                 "Should have captured both matching policies"
             );
             // Both policy0 and policy1 should be present
-            let policy_ids: Vec<_> = policies.iter().map(|p| p.cedar_id.as_str()).collect();
+            let policy_ids: Vec<_> = policies.iter().map(|p| p.cedar_id.as_ref()).collect();
             assert!(policy_ids.contains(&"policy0"), "Should contain policy0");
             assert!(policy_ids.contains(&"policy1"), "Should contain policy1");
         }

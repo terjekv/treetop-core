@@ -6,6 +6,10 @@ use std::marker::PhantomData;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use cedar_policy::{EntityId, EntityTypeName, EntityUid};
+
+use crate::error::PolicyError;
+
 /// Marker type for Users
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub enum UserMarker {}
@@ -28,7 +32,10 @@ pub struct QualifiedId<T> {
 }
 
 impl<T> QualifiedId<T> {
-    /// Construct from its parts.  Guaranteed valid by signature.
+    /// Construct from its parts.
+    ///
+    /// Validation is performed when converting to a Cedar entity UID. Prefer
+    /// [`Self::try_new`] at an untrusted input boundary.
     pub fn new(id: impl Into<String>, namespace: Option<Vec<String>>) -> Self {
         QualifiedId {
             id: id.into(),
@@ -37,13 +44,27 @@ impl<T> QualifiedId<T> {
         }
     }
 
+    /// Construct a non-empty identifier with a valid Cedar namespace.
+    pub fn try_new(
+        id: impl Into<String>,
+        namespace: Option<Vec<String>>,
+    ) -> Result<Self, PolicyError> {
+        let qualified = Self::new(id, namespace);
+        qualified.validate_namespace_with_type("Entity")?;
+        if qualified.id.is_empty() {
+            return Err(PolicyError::InvalidFormat(
+                "entity identifier cannot be empty".to_string(),
+            ));
+        }
+        Ok(qualified)
+    }
+
     /// Get the raw id.
     pub fn id(&self) -> &str {
         &self.id
     }
 
     /// Get the namespace path.
-    #[allow(dead_code)]
     pub fn namespace(&self) -> &[String] {
         &self.namespace
     }
@@ -54,12 +75,32 @@ impl<T> QualifiedId<T> {
         if !parts.is_empty() {
             parts.push_str("::");
         }
-        format!(
-            r#"{parts}{ty}::"{id}""#,
-            id = self.id,
-            parts = parts,
-            ty = ty
-        )
+        let escaped = EntityId::new(&self.id).escaped();
+        format!(r#"{parts}{ty}::"{escaped}""#)
+    }
+
+    pub(crate) fn cedar_entity_uid(&self, ty: &str) -> Result<EntityUid, PolicyError> {
+        if self.id.is_empty() {
+            return Err(PolicyError::InvalidFormat(
+                "entity identifier cannot be empty".to_string(),
+            ));
+        }
+        let type_name = self.validate_namespace_with_type(ty)?;
+        Ok(EntityUid::from_type_name_and_id(
+            type_name,
+            EntityId::new(&self.id),
+        ))
+    }
+
+    fn validate_namespace_with_type(&self, ty: &str) -> Result<EntityTypeName, PolicyError> {
+        let type_name = if self.namespace.is_empty() {
+            ty.to_string()
+        } else {
+            format!("{}::{ty}", self.namespace.join("::"))
+        };
+        type_name.parse().map_err(|e| {
+            PolicyError::InvalidFormat(format!("invalid Cedar entity type '{type_name}': {e}"))
+        })
     }
 }
 
@@ -163,6 +204,24 @@ mod tests {
     fn test_qualified_id_empty_id() {
         let id: UserId = QualifiedId::new("", None);
         assert_eq!(id.id(), "");
+        assert!(id.cedar_entity_uid("User").is_err());
+    }
+
+    #[test]
+    fn test_qualified_id_escapes_entity_id() {
+        let id: UserId = QualifiedId::try_new("a\"b\\c", None).unwrap();
+        assert_eq!(id.fmt_qualified("User"), r#"User::"a\"b\\c""#);
+        assert_eq!(
+            id.cedar_entity_uid("User").unwrap().id().unescaped(),
+            "a\"b\\c"
+        );
+    }
+
+    #[test]
+    fn test_qualified_id_try_new_rejects_invalid_namespace() {
+        let result: Result<UserId, _> =
+            QualifiedId::try_new("alice", Some(vec!["invalid namespace".into()]));
+        assert!(result.is_err());
     }
 
     #[test]

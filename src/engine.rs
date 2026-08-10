@@ -29,7 +29,8 @@ use tracing::info_span;
 
 #[cfg(feature = "observability")]
 use crate::metrics::{
-    EvaluationPhases, EvaluationStats, record_evaluation, record_evaluation_phases, record_reload,
+    EvaluationPhases, EvaluationStats, get_sink, metrics_enabled, record_evaluation_with_phases,
+    record_reload,
 };
 
 /// Static cached Authorizer instance (stateless, reusable across evaluations).
@@ -106,7 +107,7 @@ impl PolicySnapshot {
             Some(schema) => loader::compile_policy_with_schema(policy_text, schema)?,
             None => loader::compile_policy(policy_text)?,
         };
-        let permit_policies = loader::precompute_permit_policies(&set);
+        let permit_policies = loader::precompute_permit_policies(&set)?;
         let forbid_policy_ids = loader::precompute_forbid_policy_ids(&set);
 
         let mut hasher = Sha256::new();
@@ -123,8 +124,10 @@ impl PolicySnapshot {
         Ok(PolicySnapshot {
             set,
             version: PolicyVersion {
-                hash,
-                loaded_at: humantime::format_rfc3339(SystemTime::now()).to_string(),
+                hash: hash.into(),
+                loaded_at: humantime::format_rfc3339(SystemTime::now())
+                    .to_string()
+                    .into(),
             },
             permit_policies,
             forbid_policy_ids,
@@ -207,27 +210,15 @@ fn apply_labels(
     }
 }
 
-/// Build the effective Cedar request context by merging resource context and
-/// optional request context.
+/// Build the Cedar request context from the optional typed context.
 #[inline]
 fn build_effective_context(
-    resource: &crate::types::Resource,
     request_context: Option<&RequestContext>,
 ) -> Result<cedar_policy::Context, PolicyError> {
-    let base_context = resource.cedar_ctx()?;
-    let Some(request_context) = request_context else {
-        return Ok(base_context);
-    };
-    if request_context.is_empty() {
-        return Ok(base_context);
+    match request_context {
+        Some(context) if !context.is_empty() => context.to_cedar_context(),
+        _ => Ok(cedar_policy::Context::empty()),
     }
-
-    Ok(base_context.merge(
-        request_context
-            .iter()
-            .map(|(k, v)| (k.clone(), v.to_re()))
-            .collect::<Vec<_>>(),
-    )?)
 }
 
 /// Build a Cedar request from the authorization request and resource.
@@ -265,29 +256,24 @@ fn build_entities(
     schema: Option<&Schema>,
     timers: &mut EvalTimers,
 ) -> Result<Entities, PolicyError> {
-    // Time and measure entity construction
+    let group_uids = {
+        let _timer = PhaseTimer::new(&mut timers.groups);
+        #[cfg(feature = "observability")]
+        let _groups_span = info_span!("resolve_groups").entered();
+
+        groups
+            .into_iter()
+            .flatten()
+            .map(CedarAtom::cedar_entity_uid)
+            .collect::<Result<HashSet<_>, _>>()?
+    };
+
+    // Group resolution is deliberately measured outside this phase so phase
+    // totals are non-overlapping.
     let entities = {
         let _timer = PhaseTimer::new(&mut timers.entities);
         #[cfg(feature = "observability")]
         let _entity_span = info_span!("construct_entities").entered();
-
-        // Collect group UIDs with pre-allocation to avoid over-allocations
-        let group_uids = {
-            let _timer = PhaseTimer::new(&mut timers.groups);
-            #[cfg(feature = "observability")]
-            let _groups_span = info_span!("resolve_groups").entered();
-
-            match groups {
-                Some(groups_slice) => {
-                    let mut uids = Vec::with_capacity(groups_slice.len());
-                    for g in groups_slice {
-                        uids.push(g.cedar_entity_uid()?);
-                    }
-                    uids.into_iter().collect::<HashSet<_>>()
-                }
-                None => HashSet::new(),
-            }
-        };
 
         // Construct resource entity
         let resource_attrs = resource.cedar_attr()?;
@@ -310,12 +296,7 @@ fn build_entities(
         event = "Request",
         phase = "Entities",
         time = timers.entities.as_micros(),
-        entities = entities
-            .iter()
-            .map(|e| format!("[{e}]"))
-            .collect::<Vec<_>>()
-            .join(", ")
-            .replace('\n', "")
+        entity_count = entities.iter().count()
     );
 
     Ok(entities)
@@ -331,8 +312,8 @@ fn build_entities(
 /// you can simply clone it directly.
 #[derive(Clone)]
 pub struct PolicyEngine {
-    /// Shared pointer to an `ArcSwap` holding the current `Snapshot`.
-    inner: Arc<ArcSwap<Snapshot>>,
+    /// Shared pointer to an `ArcSwap` holding the current policy snapshot.
+    inner: Arc<ArcSwap<PolicySnapshot>>,
     /// Optional label registry for augmenting resources with derived attributes.
     label_registry: Option<Arc<LabelRegistry>>,
 }
@@ -353,7 +334,7 @@ impl PolicyEngine {
     pub fn new_from_str(policy_text: &str) -> Result<Self, PolicyError> {
         let snapshot: Snapshot = Arc::new(PolicySnapshot::from_policy_text(policy_text)?);
         Ok(PolicyEngine {
-            inner: Arc::new(ArcSwap::from(Arc::new(snapshot))),
+            inner: Arc::new(ArcSwap::from(snapshot)),
             label_registry: None,
         })
     }
@@ -368,7 +349,7 @@ impl PolicyEngine {
             Some(Arc::new(schema)),
         )?);
         Ok(PolicyEngine {
-            inner: Arc::new(ArcSwap::from(Arc::new(snapshot))),
+            inner: Arc::new(ArcSwap::from(snapshot)),
             label_registry: None,
         })
     }
@@ -412,7 +393,7 @@ impl PolicyEngine {
             policy_text,
             schema,
         )?);
-        self.inner.store(Arc::new(new_snapshot));
+        self.inner.store(new_snapshot);
         debug!(
             event = "PolicyReload",
             schema_enabled = had_schema,
@@ -435,7 +416,7 @@ impl PolicyEngine {
             policy_text,
             Some(Arc::new(schema)),
         )?);
-        self.inner.store(Arc::new(new_snapshot));
+        self.inner.store(new_snapshot);
         debug!(
             event = "PolicyReload",
             schema_enabled = true,
@@ -460,11 +441,9 @@ impl PolicyEngine {
         self.reload_from_str_with_schema(policy_text, schema)
     }
 
-    /// Get the current snapshot using a short-lived read lock, then drop the lock.
+    /// Get the current immutable snapshot.
     fn current_snapshot(&self) -> Snapshot {
-        // `load_full` returns `Arc<Arc<PolicySnapshot>>`; deref one level.
-        let outer = self.inner.load_full();
-        Arc::clone(&outer)
+        self.inner.load_full()
     }
 
     /// Get the current policy version.
@@ -493,21 +472,14 @@ impl PolicyEngine {
         debug!(
             event = "Request",
             phase = "Evaluation",
-            principal = request.principal.to_string(),
-            action = request.action.to_string(),
-            resource = request.resource.to_string(),
-            groups = %groups.map(ToString::to_string).unwrap_or_else(|| "[]".into())
+            group_count = groups.map_or(0, Groups::len)
         );
 
-        // Convert UIDs once to avoid redundant conversions (on original resource)
+        // Convert each UID once after trusted label derivation is complete.
         let principal_uid = request.principal.cedar_entity_uid()?;
         let action_uid = request.action.cedar_entity_uid()?;
-        let resource_uid_original = request.resource.cedar_entity_uid()?;
-        let context_original = build_effective_context(&request.resource, request_context)?;
 
-        // Only clone and apply labels if a label registry is configured
-        // We need to keep the potentially-modified resource for building entities
-        let (resource_uid, context, resource_for_entities) = if self.label_registry.is_some() {
+        let labelled_resource = if self.label_registry.is_some() {
             let mut resource = request.resource.clone();
             apply_labels(&self.label_registry, &mut resource, &mut timers);
 
@@ -515,35 +487,27 @@ impl PolicyEngine {
                 event = "Request",
                 phase = "LabelsApplied",
                 time = timers.labels.as_micros(),
-                resource_attrs = ?resource.attrs()
+                attribute_count = resource.attributes().len()
             );
-
-            let uid = resource.cedar_entity_uid()?;
-            let ctx = build_effective_context(&resource, request_context)?;
-            (uid, ctx, resource)
+            Some(resource)
         } else {
             debug!(
                 event = "Request",
                 phase = "LabelsApplied",
                 time = timers.labels.as_micros()
             );
-
-            (
-                resource_uid_original,
-                context_original,
-                request.resource.clone(),
-            )
+            None
         };
+        let resource_for_entities = labelled_resource.as_ref().unwrap_or(&request.resource);
+        let resource_uid = resource_for_entities.cedar_entity_uid()?;
+        let context = build_effective_context(request_context)?;
 
         debug!(
             event = "Request",
             phase = "Parsed",
-            principal = principal_uid.to_string(),
-            action = action_uid.to_string(),
-            resource = resource_uid.to_string(),
-            context = context.to_string(),
-            groups = %groups.map(ToString::to_string).unwrap_or_else(|| "[]".into()),
-            attrs = ?resource_for_entities.cedar_attr()
+            group_count = groups.map_or(0, Groups::len),
+            attribute_count = resource_for_entities.attributes().len(),
+            request_context_attribute_count = request_context.map_or(0, RequestContext::len)
         );
 
         // Build Cedar request with pre-converted UIDs
@@ -560,7 +524,7 @@ impl PolicyEngine {
         let entities = build_entities(
             &principal_uid,
             &resource_uid,
-            &resource_for_entities,
+            resource_for_entities,
             groups,
             schema,
             &mut timers,
@@ -634,18 +598,10 @@ impl PolicyEngine {
     /// concurrently without blocking each other.
     #[cfg_attr(
         feature = "observability",
-        tracing::instrument(
-            name = "policy_evaluation",
-            skip_all,
-            fields(
-                principal = %request.principal,
-                action = %request.action,
-                resource = %request.resource
-            )
-        )
+        tracing::instrument(name = "policy_evaluation", skip_all)
     )]
     pub fn evaluate(&self, request: &Request) -> Result<Decision, PolicyError> {
-        Ok(self.evaluate_internal(request, None)?.decision)
+        Ok(self.evaluate_internal(request, None, false)?.decision)
     }
 
     /// Evaluate a request with explicit Cedar request context.
@@ -655,7 +611,7 @@ impl PolicyEngine {
         request_context: &RequestContext,
     ) -> Result<Decision, PolicyError> {
         Ok(self
-            .evaluate_internal(request, Some(request_context))?
+            .evaluate_internal(request, Some(request_context), false)?
             .decision)
     }
 
@@ -664,7 +620,7 @@ impl PolicyEngine {
         &self,
         request: &Request,
     ) -> Result<DecisionDiagnostics, PolicyError> {
-        self.evaluate_internal(request, None)
+        self.evaluate_internal(request, None, true)
     }
 
     /// Evaluate a request with explicit context and include deny diagnostics.
@@ -673,13 +629,14 @@ impl PolicyEngine {
         request: &Request,
         request_context: &RequestContext,
     ) -> Result<DecisionDiagnostics, PolicyError> {
-        self.evaluate_internal(request, Some(request_context))
+        self.evaluate_internal(request, Some(request_context), true)
     }
 
     fn evaluate_internal(
         &self,
         request: &Request,
         request_context: Option<&RequestContext>,
+        include_forbid_diagnostics: bool,
     ) -> Result<DecisionDiagnostics, PolicyError> {
         // Prepare the request: apply labels, build entities, resolve groups
         let mut prepared = self.prepare(request, request_context)?;
@@ -713,46 +670,50 @@ impl PolicyEngine {
             policy_loaded_at = %version.loaded_at,
         );
 
-        // Extract all permit policies from the authorization result
-        let permit_policies = extract_permit_policies(&prepared.snapshot, &result);
         #[cfg(feature = "observability")]
-        let allow_policy_ids = permit_policies.ids();
-        let forbid_policy_ids = extract_forbid_policy_ids(&prepared.snapshot, &result);
+        let sink = get_sink();
+        #[cfg(feature = "observability")]
+        let metrics_are_enabled = metrics_enabled(&sink);
+
+        // Permit metadata is part of Allow decisions. Forbid IDs are only
+        // materialized when diagnostics or an active metrics sink needs them.
+        let permit_policies = extract_permit_policies(&prepared.snapshot, &result);
+        let collect_forbid_ids = include_forbid_diagnostics;
+        #[cfg(feature = "observability")]
+        let collect_forbid_ids = collect_forbid_ids || metrics_are_enabled;
+        let forbid_policy_ids = if collect_forbid_ids {
+            extract_forbid_policy_ids(&prepared.snapshot, &result)
+        } else {
+            Vec::new()
+        };
         let decision =
-            Decision::from_decision_with_policy(result.decision(), permit_policies, version);
+            Decision::from_decision_with_policy(result.decision(), permit_policies, version)?;
 
         // Record metrics (no-op when no sink is configured or feature disabled)
         #[cfg(feature = "observability")]
         {
-            let dur = prepared.timers.total_elapsed();
-            let allowed = result.decision() == cedar_policy::Decision::Allow;
-            let principal_id = request.principal.to_string();
-            let action_id = request.action.to_string();
+            if metrics_are_enabled {
+                let dur = prepared.timers.total_elapsed();
+                let allowed = result.decision() == cedar_policy::Decision::Allow;
+                let matched_policies = match &decision {
+                    Decision::Allow { policies, .. } => policies.ids(),
+                    Decision::Deny { .. } => forbid_policy_ids.clone(),
+                };
+                let stats = EvaluationStats {
+                    duration: dur,
+                    allowed,
+                    matched_policies,
+                };
+                let phases = EvaluationPhases {
+                    apply_labels_ms: prepared.timers.labels.as_secs_f64() * 1000.0,
+                    construct_entities_ms: prepared.timers.entities.as_secs_f64() * 1000.0,
+                    resolve_groups_ms: prepared.timers.groups.as_secs_f64() * 1000.0,
+                    authorize_ms: prepared.timers.authz.as_secs_f64() * 1000.0,
+                    total_ms: stats.duration.as_secs_f64() * 1000.0,
+                };
 
-            let matched_policies = if allowed {
-                allow_policy_ids.clone()
-            } else {
-                forbid_policy_ids.clone()
-            };
-
-            let stats = EvaluationStats {
-                duration: dur,
-                allowed,
-                principal_id,
-                action_id,
-                matched_policies,
-            };
-
-            let phases = EvaluationPhases {
-                apply_labels_ms: prepared.timers.labels.as_secs_f64() * 1000.0,
-                construct_entities_ms: prepared.timers.entities.as_secs_f64() * 1000.0,
-                resolve_groups_ms: prepared.timers.groups.as_secs_f64() * 1000.0,
-                authorize_ms: prepared.timers.authz.as_secs_f64() * 1000.0,
-                total_ms: stats.duration.as_secs_f64() * 1000.0,
-            };
-
-            record_evaluation(&stats);
-            record_evaluation_phases(&stats, &phases);
+                record_evaluation_with_phases(&sink, &stats, &phases);
+            }
         }
 
         Ok(DecisionDiagnostics {
@@ -761,7 +722,7 @@ impl PolicyEngine {
         })
     }
 
-    /// List all policies applicable to a user.
+    /// List permit-policy candidates whose scope matches a user.
     ///
     /// This mirrors [`PolicyEngine::evaluate`] input shape for principal identity:
     /// user id + groups + shared namespace.
@@ -773,6 +734,8 @@ impl PolicyEngine {
     /// - `principal is User`
     /// - `principal is User in Group::"..."`
     ///
+    /// Cedar `when` and `unless` clauses are not evaluated. The result is not
+    /// an authorization decision; use [`PolicyEngine::evaluate`] to authorize.
     /// Resource constraints are not applied in this method. To additionally
     /// filter by policy resource constraints, use
     /// [`PolicyEngine::list_policies_for_user_with_resource`].
@@ -818,24 +781,27 @@ impl PolicyEngine {
             groups,
             namespace,
             None,
-            PolicyEffectFilter::Any,
+            PolicyEffectFilter::Permit,
         )
     }
 
-    /// List all policies applicable to a concrete request.
+    /// List permit-policy candidates whose scope matches a concrete request.
     ///
     /// This mirrors [`PolicyEngine::evaluate`] by accepting `&Request` and uses:
     /// - the request principal (including user group membership, if any)
     /// - the request action
     /// - the request resource
     ///
-    /// Effect filter defaults to `Any`; to filter by permit/forbid, use
-    /// [`PolicyEngine::list_policies_with_effect`].
+    /// Cedar `when` and `unless` clauses are not evaluated. The result is not
+    /// an authorization decision. This method defaults to permit policies; use
+    /// [`PolicyEngine::list_policies_with_effect`] for an explicit effect.
     pub fn list_policies(&self, request: &Request) -> Result<UserPolicies, PolicyError> {
-        self.list_policies_with_effect(request, PolicyEffectFilter::Any)
+        self.list_policies_with_effect(request, PolicyEffectFilter::Permit)
     }
 
-    /// List all policies applicable to a concrete request, with effect filtering.
+    /// List policy candidates for a request, with explicit effect filtering.
+    ///
+    /// Cedar `when` and `unless` clauses are not evaluated.
     pub fn list_policies_with_effect(
         &self,
         request: &Request,
@@ -875,7 +841,7 @@ impl PolicyEngine {
             groups,
             namespace,
             resource,
-            PolicyEffectFilter::Any,
+            PolicyEffectFilter::Permit,
         )
     }
 
@@ -909,7 +875,7 @@ impl PolicyEngine {
             group,
             namespace,
             None,
-            PolicyEffectFilter::Any,
+            PolicyEffectFilter::Permit,
         )
     }
 
@@ -927,7 +893,7 @@ impl PolicyEngine {
             group,
             namespace,
             resource,
-            PolicyEffectFilter::Any,
+            PolicyEffectFilter::Permit,
         )
     }
 

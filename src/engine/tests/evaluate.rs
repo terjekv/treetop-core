@@ -107,6 +107,37 @@ fn test_policy_with_host_patterns(username: &str, host_name: &str) {
     snapshot_decision_engine!(decision);
 }
 
+#[test]
+fn derived_labels_cannot_be_forged_by_resource_attributes() {
+    let labeler = RegexLabeler::new(
+        "Host",
+        "name",
+        "nameLabels",
+        vec![(
+            "example_domain".to_string(),
+            Regex::new(r"example\.com$").unwrap(),
+        )],
+    );
+    let registry = LabelRegistryBuilder::new()
+        .add_labeler(Arc::new(labeler))
+        .build();
+    let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_HOST_PATTERNS)
+        .unwrap()
+        .with_label_registry(registry);
+    let request = Request {
+        principal: Principal::User(User::new("alice", None, None)),
+        action: Action::new("create_host", None),
+        resource: Resource::new("Host", "attacker.invalid")
+            .with_attr("name", AttrValue::String("attacker.invalid".into()))
+            .with_attr(
+                "nameLabels",
+                AttrValue::Set(vec![AttrValue::String("example_domain".into())]),
+            ),
+    };
+
+    assert!(matches!(engine.evaluate(&request).unwrap(), Deny { .. }));
+}
+
 #[parameterized(
         alice_allow = {"alice" },
         bob_deny = {"bob" }

@@ -1,7 +1,6 @@
 //! User permissions and policy collections.
 
 use cedar_policy::{ActionConstraint, EntityUid, Policy};
-use itertools::Itertools;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
@@ -9,8 +8,8 @@ use serde_json::Value;
 /// Filter for policy effects when listing policies.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 pub enum PolicyEffectFilter {
-    #[default]
     Any,
+    #[default]
     Permit,
     Forbid,
 }
@@ -40,7 +39,12 @@ pub struct PolicyMatch {
     pub reasons: Vec<PolicyMatchReason>,
 }
 
-/// A set of permissions for a given user.
+/// Structurally matched candidate policies for a principal.
+///
+/// This type is not an authorization decision. Its policies have only had
+/// their scope constraints matched; Cedar `when` and `unless` clauses have not
+/// been evaluated. Use `PolicyEngine::evaluate` to authorize an operation.
+#[must_use = "candidate policies are not an authorization decision"]
 #[derive(Debug, Clone)]
 pub struct UserPolicies {
     user: String,
@@ -95,8 +99,9 @@ impl UserPolicies {
         policies: Vec<Policy>,
         matches: Vec<PolicyMatch>,
     ) -> Self {
-        let actions: Vec<EntityUid> = policies
+        let mut actions: Vec<EntityUid> = policies
             .iter()
+            .filter(|policy| policy.effect() == cedar_policy::Effect::Permit)
             .flat_map(|p| match p.action_constraint() {
                 // exactly one action
                 ActionConstraint::Eq(act) => vec![act.clone()],
@@ -106,6 +111,8 @@ impl UserPolicies {
                 ActionConstraint::Any => Vec::new(),
             })
             .collect();
+        actions.sort();
+        actions.dedup();
 
         UserPolicies {
             user: user.to_string(),
@@ -123,8 +130,19 @@ impl UserPolicies {
         self.policies.is_empty()
     }
 
-    pub fn actions(&self) -> &[EntityUid] {
+    /// Candidate actions mentioned by permit policies.
+    ///
+    /// Conditions have not been evaluated. This list must not be used to
+    /// authorize an operation.
+    pub fn candidate_actions(&self) -> &[EntityUid] {
         &self.actions
+    }
+
+    /// Backward-compatible alias for [`Self::candidate_actions`].
+    ///
+    /// This is not a list of authorized actions.
+    pub fn actions(&self) -> &[EntityUid] {
+        self.candidate_actions()
     }
 
     pub fn policies(&self) -> &[Policy] {
@@ -133,6 +151,11 @@ impl UserPolicies {
 
     pub fn matches(&self) -> &[PolicyMatch] {
         &self.matches
+    }
+
+    /// Whether any candidate has a Cedar `when` or `unless` clause.
+    pub fn has_non_scope_constraints(&self) -> bool {
+        self.policies.iter().any(Policy::has_non_scope_constraint)
     }
 
     pub fn reasons_for_policy(&self, cedar_id: &str) -> Option<&[PolicyMatchReason]> {
@@ -144,20 +167,24 @@ impl UserPolicies {
 
     /// Get the actions as a sorted list of strings.
     pub fn actions_by_name(&self) -> Vec<String> {
-        self.actions
+        let mut actions = self
+            .actions
             .iter()
             .map(|a| a.to_string())
-            .sorted()
-            .collect()
+            .collect::<Vec<_>>();
+        actions.sort();
+        actions
     }
 
     /// Get the policies as a sorted list of strings.
     pub fn policies_by_name(&self) -> Vec<String> {
-        self.policies
+        let mut policies = self
+            .policies
             .iter()
             .map(|p| p.to_string())
-            .sorted()
-            .collect()
+            .collect::<Vec<_>>();
+        policies.sort();
+        policies
     }
 }
 
@@ -178,10 +205,14 @@ impl Serialize for UserPolicies {
             policies_as_json.push(json);
         }
 
-        let mut s = ser.serialize_struct("UserPolicies", 3)?;
+        let mut s = ser.serialize_struct("UserPolicies", 4)?;
         s.serialize_field("user", &self.user)?;
         s.serialize_field("policies", &policies_as_json)?;
         s.serialize_field("matches", &self.matches)?;
+        s.serialize_field(
+            "has_non_scope_constraints",
+            &self.has_non_scope_constraints(),
+        )?;
         s.end()
     }
 }
@@ -198,6 +229,11 @@ mod tests {
         assert!(policies.is_empty());
         assert_eq!(policies.actions().len(), 0);
         assert_eq!(policies.policies().len(), 0);
+    }
+
+    #[test]
+    fn policy_effect_filter_defaults_to_permit() {
+        assert_eq!(PolicyEffectFilter::default(), PolicyEffectFilter::Permit);
     }
 
     #[test]
@@ -280,6 +316,7 @@ mod tests {
         assert_eq!(json["policies"].as_array().unwrap().len(), 1);
         assert!(json["matches"].is_array());
         assert_eq!(json["matches"].as_array().unwrap().len(), 1);
+        assert_eq!(json["has_non_scope_constraints"], false);
     }
 
     #[test]

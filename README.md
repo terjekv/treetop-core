@@ -149,11 +149,15 @@ permit (
      println!("Policy loaded at: {}", version.loaded_at);
  }
 
-// List all of alice's policies, assuming no groups and no namespaces
-let policies = engine.list_policies_for_user("alice", &[], &[]).unwrap();
- // This value is also seralizable to JSON
+ // List alice's candidate policies, assuming no groups and no namespaces
+ let policies = engine.list_policies_for_user("alice", &[], &[]).unwrap();
+ // This value is also serializable to JSON
  let json = serde_json::to_string(&policies).unwrap();
 ```
+
+Policy-listing methods return structurally matched permit candidates, not an authorization decision. They do not evaluate Cedar `when` or `unless` clauses. Always call `PolicyEngine::evaluate` for the concrete request before granting access.
+
+Principal IDs, group membership, resource attributes, and request context are authorization inputs. Populate them from authenticated, server-controlled state rather than accepting client assertions directly.
 
 If your Cedar policies use `context`, pass it explicitly at evaluation time:
 
@@ -207,6 +211,7 @@ engine.reload_from_str(policies).unwrap();
 ```
 
 With schema validation enabled:
+
 - policy load/reload fails if policies do not type-check against the schema
 - request evaluation fails with `RequestValidationError` when principal/action/resource
   violates schema `appliesTo`
@@ -233,6 +238,7 @@ engine
 ```
 
 Reload logging:
+
 - reload operations emit a `PolicyReload` debug event
 - fields include `schema_enabled`, `schema_reloaded`, and when relevant `schema_previously_enabled`
 

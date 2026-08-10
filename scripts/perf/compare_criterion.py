@@ -9,13 +9,13 @@ import sys
 
 
 def load_means(target_dir: pathlib.Path) -> dict[str, float]:
-    root = target_dir / "criterion" / "evaluate"
+    root = target_dir / "criterion"
     if not root.exists():
         raise SystemExit(f"missing criterion output directory: {root}")
 
     means: dict[str, float] = {}
-    for estimates in sorted(root.glob("*/new/estimates.json")):
-        scenario = estimates.parents[1].name
+    for estimates in sorted(root.glob("evaluate_*/*/new/estimates.json")):
+        scenario = f"{estimates.parents[2].name}/{estimates.parents[1].name}"
         data = json.loads(estimates.read_text())
         means[scenario] = float(data["mean"]["point_estimate"])
 

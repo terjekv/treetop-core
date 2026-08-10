@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use cedar_policy::{Context, Entity, EntityUid, RestrictedExpression};
+use cedar_policy::{Entity, EntityUid, RestrictedExpression};
 
 use crate::error::PolicyError;
 
@@ -8,13 +8,12 @@ use crate::error::PolicyError;
 /// `Action::"foo"`, `Group::"devs"`.
 ///
 /// Types implementing this trait can produce their Cedar identity (`cedar_id`),
-/// attributes, parent relationships, and context for evaluation.
+/// attributes, and parent relationships for evaluation.
 pub trait CedarAtom {
     /// The Cedar typename (“User”, “Action”, “Group”, etc)
     fn cedar_type() -> &'static str;
 
     /// Build a Cedar parent list for this atom, default is no parents.
-    #[allow(dead_code)]
     fn cedar_parents(&self) -> HashSet<EntityUid> {
         // Default: no parent type
         HashSet::new()
@@ -22,8 +21,6 @@ pub trait CedarAtom {
 
     /// Build an entity for this Cedar atom, e.g. `User::"alice"` or `Host::"flappa.example.com"`.
     ///
-    /// Public API: may be used by external consumers or future refactorings.
-    #[allow(dead_code)]
     fn cedar_entity(&self) -> Result<Entity, PolicyError> {
         let entity_uid = self.cedar_entity_uid()?;
         let attrs = self.cedar_attr()?;
@@ -41,11 +38,6 @@ pub trait CedarAtom {
         self.cedar_id()
             .parse::<EntityUid>()
             .map_err(|e| PolicyError::ParseError(e.to_string()))
-    }
-
-    /// Build the context for this Cedar atom, empty by default.
-    fn cedar_ctx(&self) -> Result<Context, PolicyError> {
-        Ok(Context::empty())
     }
 
     /// The ID string, fully qualified (e.g. `User::"alice"` or `DNS::Action::"create_host"`).

@@ -50,16 +50,21 @@ pub fn validate_policy_set_with_schema(
 }
 
 /// Precompute permit policy metadata for fast lookup during evaluation.
-pub fn precompute_permit_policies(set: &PolicySet) -> HashMap<PolicyId, PermitPolicy> {
+pub(crate) fn precompute_permit_policies(
+    set: &PolicySet,
+) -> Result<HashMap<PolicyId, PermitPolicy>, PolicyError> {
     set.policies()
         .filter(|policy| policy.effect() == Effect::Permit)
         .map(|policy| {
-            let permit_policy = PermitPolicy::new(
-                policy.to_string(),
-                policy.to_json().unwrap_or_default(),
-                policy.id().to_string(),
-            );
-            (policy.id().clone(), permit_policy)
+            let json = policy.to_json().map_err(|error| {
+                PolicyError::EvalError(format!(
+                    "failed to serialize permit policy '{}': {error}",
+                    policy.id()
+                ))
+            })?;
+            let permit_policy =
+                PermitPolicy::new(policy.to_string(), json, policy.id().to_string());
+            Ok((policy.id().clone(), permit_policy))
         })
         .collect()
 }
@@ -68,7 +73,7 @@ pub fn precompute_permit_policies(set: &PolicySet) -> HashMap<PolicyId, PermitPo
 ///
 /// For each forbid policy this prefers `@id(...)` when available, otherwise
 /// falls back to Cedar's internal policy ID (e.g. `policy3`).
-pub fn precompute_forbid_policy_ids(set: &PolicySet) -> HashMap<PolicyId, String> {
+pub(crate) fn precompute_forbid_policy_ids(set: &PolicySet) -> HashMap<PolicyId, String> {
     set.policies()
         .filter(|policy| policy.effect() == Effect::Forbid)
         .map(|policy| {

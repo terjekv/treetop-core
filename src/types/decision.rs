@@ -1,56 +1,64 @@
 //! Authorization decision types with policy metadata.
 
 use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
+use crate::error::PolicyError;
+
 /// A permit policy that permitted a specific action on a resource.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 pub struct PermitPolicy {
-    pub literal: String,
-    pub json: Value,
-    pub annotation_id: Option<String>,
-    pub cedar_id: String,
+    #[schema(value_type = String)]
+    pub literal: Arc<str>,
+    #[schema(value_type = serde_json::Value)]
+    pub json: Arc<Value>,
+    #[schema(value_type = Option<String>)]
+    pub annotation_id: Option<Arc<str>>,
+    #[schema(value_type = String)]
+    pub cedar_id: Arc<str>,
 }
 
 impl PermitPolicy {
     pub fn new(literal: String, json: Value, cedar_id: String) -> Self {
         let annotation_id = Self::extract_annotation_id(&literal, &json);
         Self {
-            literal,
-            json,
+            literal: literal.into(),
+            json: Arc::new(json),
             annotation_id,
-            cedar_id,
+            cedar_id: cedar_id.into(),
         }
     }
 
     /// Returns the ID of the policy if available.
     ///
     /// IDs should be in annotations > id field in the JSON representation, or an @id line in the literal.
-    pub fn id(&self) -> &String {
+    pub fn id(&self) -> &str {
         match &self.annotation_id {
-            Some(id) => id,
-            None => &self.cedar_id,
+            Some(id) => id.as_ref(),
+            None => self.cedar_id.as_ref(),
         }
     }
 
-    fn extract_annotation_id(literal: &str, json: &Value) -> Option<String> {
+    fn extract_annotation_id(literal: &str, json: &Value) -> Option<Arc<str>> {
         if let Some(annotations) = json.get("annotations")
             && let Some(id_value) = annotations.get("id")
             && let Some(id_str) = id_value.as_str()
         {
-            return Some(id_str.to_string());
+            return Some(Arc::from(id_str));
         }
 
         for line in literal.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("@id") {
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    return Some(parts[1].trim_end_matches(';').to_string());
-                }
+            if let Some(value) = trimmed
+                .strip_prefix("@id(")
+                .and_then(|value| value.strip_suffix(')'))
+                && let Ok(id) = serde_json::from_str::<String>(value.trim())
+            {
+                return Some(id.into());
             }
         }
 
@@ -91,7 +99,7 @@ impl PermitPolicies {
 
     /// Get policy IDs as a sorted vector of strings.
     pub fn ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.0.iter().map(|p| p.id().clone()).collect();
+        let mut ids: Vec<String> = self.0.iter().map(|p| p.id().to_string()).collect();
         ids.sort();
         ids
     }
@@ -115,7 +123,7 @@ impl PermitPolicies {
 impl Display for PermitPolicies {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         // Get sorted literals for consistent display
-        let mut literals: Vec<&str> = self.0.iter().map(|p| p.literal.as_str()).collect();
+        let mut literals: Vec<&str> = self.0.iter().map(|p| p.literal.as_ref()).collect();
         literals.sort();
         write!(f, "{}", literals.join("; "))
     }
@@ -155,9 +163,11 @@ impl FromIterator<PermitPolicy> for PermitPolicies {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 pub struct PolicyVersion {
     /// Hash of the policy source (e.g. SHA-256 of the policy text).
-    pub hash: String,
+    #[schema(value_type = String)]
+    pub hash: Arc<str>,
     /// When this policy set was loaded into the engine.
-    pub loaded_at: String,
+    #[schema(value_type = String)]
+    pub loaded_at: Arc<str>,
 }
 
 impl Display for PolicyVersion {
@@ -197,12 +207,18 @@ impl Display for Decision {
     }
 }
 
+/// Convert a Cedar decision plus precomputed policy metadata into a decision.
+///
+/// The conversion fails closed if Cedar reports `Allow` but no matching permit
+/// policy metadata is available.
 pub trait FromDecisionWithPolicy {
     fn from_decision_with_policy(
         response: cedar_policy::Decision,
         policies: PermitPolicies,
         version: PolicyVersion,
-    ) -> Self;
+    ) -> Result<Self, PolicyError>
+    where
+        Self: Sized;
 }
 
 impl FromDecisionWithPolicy for Decision {
@@ -210,15 +226,17 @@ impl FromDecisionWithPolicy for Decision {
         decision: cedar_policy::Decision,
         policies: PermitPolicies,
         version: PolicyVersion,
-    ) -> Self {
+    ) -> Result<Self, PolicyError> {
         match decision {
             cedar_policy::Decision::Allow => {
                 if policies.is_empty() {
-                    panic!("Allow decision must have at least one policy");
+                    return Err(PolicyError::EvalError(
+                        "Cedar returned Allow without a matching permit policy".to_string(),
+                    ));
                 }
-                Decision::Allow { policies, version }
+                Ok(Decision::Allow { policies, version })
             }
-            cedar_policy::Decision::Deny => Decision::Deny { version },
+            cedar_policy::Decision::Deny => Ok(Decision::Deny { version }),
         }
     }
 }
@@ -235,8 +253,8 @@ mod tests {
             "policy0".to_string(),
         );
         let version = PolicyVersion {
-            hash: "abc123".to_string(),
-            loaded_at: "2023-01-01T00:00:00Z".to_string(),
+            hash: "abc123".into(),
+            loaded_at: "2023-01-01T00:00:00Z".into(),
         };
         let decision = Decision::Allow {
             policies: vec![policy.clone()].into(),
@@ -251,8 +269,8 @@ mod tests {
     #[test]
     fn test_decision_display_deny() {
         let version = PolicyVersion {
-            hash: "def456".to_string(),
-            loaded_at: "2023-01-01T00:00:00Z".to_string(),
+            hash: "def456".into(),
+            loaded_at: "2023-01-01T00:00:00Z".into(),
         };
         let decision = Decision::Deny { version };
         let display = format!("{}", decision);
@@ -263,8 +281,8 @@ mod tests {
     #[test]
     fn test_policy_version_display() {
         let version = PolicyVersion {
-            hash: "abc123".to_string(),
-            loaded_at: "2023-01-01T00:00:00Z".to_string(),
+            hash: "abc123".into(),
+            loaded_at: "2023-01-01T00:00:00Z".into(),
         };
         let display = format!("{}", version);
         assert!(display.contains("abc123"));
@@ -279,15 +297,16 @@ mod tests {
             "policy0".to_string(),
         );
         let version = PolicyVersion {
-            hash: "test123".to_string(),
-            loaded_at: "2023-01-01T00:00:00Z".to_string(),
+            hash: "test123".into(),
+            loaded_at: "2023-01-01T00:00:00Z".into(),
         };
 
         let decision = Decision::from_decision_with_policy(
             cedar_policy::Decision::Allow,
             vec![policy.clone()].into(),
             version.clone(),
-        );
+        )
+        .unwrap();
 
         match decision {
             Decision::Allow {
@@ -297,7 +316,7 @@ mod tests {
                 assert_eq!(policies.len(), 1);
                 let first_policy = policies.as_slice()[0].clone();
                 assert_eq!(first_policy.literal, policy.literal);
-                assert_eq!(first_policy.cedar_id, "policy0".to_string());
+                assert_eq!(first_policy.cedar_id.as_ref(), "policy0");
                 assert_eq!(v.hash, version.hash);
             }
             _ => panic!("Expected Allow decision"),
@@ -307,15 +326,16 @@ mod tests {
     #[test]
     fn test_from_decision_with_policy_deny() {
         let version = PolicyVersion {
-            hash: "test123".to_string(),
-            loaded_at: "2023-01-01T00:00:00Z".to_string(),
+            hash: "test123".into(),
+            loaded_at: "2023-01-01T00:00:00Z".into(),
         };
 
         let decision = Decision::from_decision_with_policy(
             cedar_policy::Decision::Deny,
             PermitPolicies::empty(),
             version.clone(),
-        );
+        )
+        .unwrap();
 
         match decision {
             Decision::Deny { version: v } => {
@@ -332,8 +352,22 @@ mod tests {
             serde_json::json!({"effect": "permit"}),
             "policy0".to_string(),
         );
-        assert_eq!(policy.literal, "permit(principal, action, resource);");
-        assert_eq!(policy.cedar_id, "policy0".to_string());
+        assert_eq!(
+            policy.literal.as_ref(),
+            "permit(principal, action, resource);"
+        );
+        assert_eq!(policy.cedar_id.as_ref(), "policy0");
+    }
+
+    #[test]
+    fn test_permit_policy_extracts_literal_annotation_fallback() {
+        let policy = PermitPolicy::new(
+            "@id(\"allow_read\")\npermit(principal, action, resource);".to_string(),
+            serde_json::json!({}),
+            "policy0".to_string(),
+        );
+
+        assert_eq!(policy.id(), "allow_read");
     }
 
     #[test]
@@ -344,8 +378,8 @@ mod tests {
             "policy0".to_string(),
         );
         let version = PolicyVersion {
-            hash: "abc123".to_string(),
-            loaded_at: "2023-01-01T00:00:00Z".to_string(),
+            hash: "abc123".into(),
+            loaded_at: "2023-01-01T00:00:00Z".into(),
         };
 
         let decision = Decision::Allow {
@@ -369,10 +403,10 @@ mod tests {
                 version: v,
                 policies,
             } => {
-                assert_eq!(v.hash, "abc123");
+                assert_eq!(v.hash.as_ref(), "abc123");
                 assert_eq!(policies.len(), 1);
                 let first_policy = policies.as_slice()[0].clone();
-                assert_eq!(first_policy.cedar_id, "policy0".to_string());
+                assert_eq!(first_policy.cedar_id.as_ref(), "policy0");
             }
             _ => panic!("Expected Allow decision"),
         }
@@ -381,8 +415,8 @@ mod tests {
     #[test]
     fn test_policy_version_serialization() {
         let version = PolicyVersion {
-            hash: "abc123".to_string(),
-            loaded_at: "2023-01-01T00:00:00Z".to_string(),
+            hash: "abc123".into(),
+            loaded_at: "2023-01-01T00:00:00Z".into(),
         };
 
         let serialized = serde_json::to_value(&version).unwrap();
@@ -402,21 +436,21 @@ mod tests {
         let cloned = policy.clone();
         assert_eq!(policy.literal, cloned.literal);
         assert_eq!(policy.cedar_id, cloned.cedar_id);
-        assert_eq!(policy.cedar_id, "policy1".to_string());
+        assert_eq!(policy.cedar_id.as_ref(), "policy1");
     }
 
     #[test]
     fn test_decision_clone() {
         let version = PolicyVersion {
-            hash: "abc123".to_string(),
-            loaded_at: "2023-01-01T00:00:00Z".to_string(),
+            hash: "abc123".into(),
+            loaded_at: "2023-01-01T00:00:00Z".into(),
         };
         let decision = Decision::Deny { version };
         let cloned = decision.clone();
 
         match cloned {
             Decision::Deny { version: v } => {
-                assert_eq!(v.hash, "abc123");
+                assert_eq!(v.hash.as_ref(), "abc123");
             }
             _ => panic!("Expected Deny decision"),
         }
@@ -485,7 +519,7 @@ mod tests {
         let mut count = 0;
         for policy in &policies {
             count += 1;
-            assert!(policy.cedar_id == "policy1" || policy.cedar_id == "policy2");
+            assert!(matches!(policy.cedar_id.as_ref(), "policy1" | "policy2"));
         }
         assert_eq!(count, 2);
 
@@ -499,8 +533,8 @@ mod tests {
     #[test]
     fn test_decision_diagnostics_serialization() {
         let version = PolicyVersion {
-            hash: "abc123".to_string(),
-            loaded_at: "2023-01-01T00:00:00Z".to_string(),
+            hash: "abc123".into(),
+            loaded_at: "2023-01-01T00:00:00Z".into(),
         };
         let diagnostics = DecisionDiagnostics {
             decision: Decision::Deny { version },

@@ -102,9 +102,5 @@ impl ActionQuery {
 }
 
 fn entity_type_name_from_uid(uid: &EntityUid) -> String {
-    let uid_str = uid.to_string();
-    if let Some(idx) = uid_str.rfind("::") {
-        return uid_str[..idx].to_string();
-    }
-    uid_str
+    uid.type_name().to_string()
 }

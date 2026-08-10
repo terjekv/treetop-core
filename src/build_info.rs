@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use serde::Serialize;
 use std::sync::OnceLock;
 
@@ -25,38 +23,23 @@ pub struct GitInfo {
     pub dirty: bool,
 }
 
-fn non_idempotent(s: Option<&'static str>) -> &'static str {
-    match s {
-        Some("VERGEN_IDEMPOTENT_OUTPUT") | None => "",
-        Some(v) => v,
-    }
-}
-
 static CELL: OnceLock<BuildInfo> = OnceLock::new();
 
 pub fn build_info() -> &'static BuildInfo {
     CELL.get_or_init(|| {
         let pkg_name = env!("CARGO_PKG_NAME");
         let pkg_ver = env!("CARGO_PKG_VERSION");
-        let dependencies = env!("VERGEN_CARGO_DEPENDENCIES")
-            .split(',')
-            .collect::<Vec<_>>();
-
-        let cedar_version = dependencies
-            .iter()
-            .find(|&&dep| dep.starts_with("cedar-policy"))
-            .map(|dep| dep.split_whitespace().nth(1).unwrap_or(""))
-            .unwrap_or("default");
+        let cedar_version = option_env!("TREETOP_CEDAR_VERSION").unwrap_or("unknown");
 
         let crate_url = option_env!("CARGO_PKG_REPOSITORY").unwrap_or("");
 
-        let describe = non_idempotent(option_env!("VERGEN_GIT_DESCRIBE"));
-        let sha = non_idempotent(option_env!("VERGEN_GIT_SHA"));
-        let branch = non_idempotent(option_env!("VERGEN_GIT_BRANCH"));
-        let dirty = option_env!("VERGEN_GIT_DIRTY").unwrap_or("false") == "true";
+        let describe = option_env!("TREETOP_GIT_DESCRIBE").unwrap_or("");
+        let sha = option_env!("TREETOP_GIT_SHA").unwrap_or("");
+        let branch = option_env!("TREETOP_GIT_BRANCH").unwrap_or("");
+        let dirty = option_env!("TREETOP_GIT_DIRTY").unwrap_or("false") == "true";
 
         let version = format_human_version(pkg_ver, describe, dirty);
-        let build_unix = option_env!("VERGEN_BUILD_TIMESTAMP").and_then(|s| s.parse().ok());
+        let build_unix = option_env!("TREETOP_BUILD_UNIX").and_then(|s| s.parse().ok());
 
         let git = if !describe.is_empty() {
             Some(GitInfo {
@@ -75,9 +58,9 @@ pub fn build_info() -> &'static BuildInfo {
             crate_version: pkg_ver,
             version,
             git,
-            rustc_semver: option_env!("VERGEN_RUSTC_SEMVER"),
-            target_triple: option_env!("VERGEN_CARGO_TARGET_TRIPLE"),
-            profile: option_env!("VERGEN_CARGO_PROFILE"),
+            rustc_semver: option_env!("TREETOP_RUSTC_SEMVER"),
+            target_triple: option_env!("TREETOP_TARGET_TRIPLE"),
+            profile: option_env!("TREETOP_PROFILE"),
             build_unix,
             cedar_version,
         }

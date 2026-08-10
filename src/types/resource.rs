@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::str::FromStr;
 
-use cedar_policy::{Context, EntityUid, RestrictedExpression};
+use cedar_policy::{EntityId, EntityTypeName, EntityUid, RestrictedExpression};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -14,36 +14,74 @@ use crate::traits::CedarAtom;
 use super::attr_value::AttrValue;
 use super::cedar_type::CedarType;
 
-pub(super) struct CedarParts<'a> {
-    pub id: &'a str,
+pub(super) struct CedarParts {
+    pub id: String,
     pub type_part: Option<String>,
     pub namespace: Option<Vec<String>>,
 }
 
-pub(super) fn split_string_into_cedar_parts(s: &str) -> Result<CedarParts<'_>, PolicyError> {
-    let parts: Vec<&str> = s.split("::").collect();
-    if parts.len() == 1 {
+pub(super) fn split_string_into_cedar_parts(s: &str) -> Result<CedarParts, PolicyError> {
+    let input = s.trim();
+    if input.is_empty() {
+        return Err(PolicyError::InvalidFormat(
+            "entity identifier cannot be empty".to_string(),
+        ));
+    }
+
+    if let Ok(uid) = input.parse::<EntityUid>() {
+        if uid.id().unescaped().is_empty() {
+            return Err(PolicyError::InvalidFormat(
+                "entity identifier cannot be empty".to_string(),
+            ));
+        }
+        let type_name = uid.type_name();
+        let namespace = type_name
+            .namespace_components()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
         return Ok(CedarParts {
-            id: parts[0],
+            id: uid.id().unescaped().to_string(),
+            type_part: Some(type_name.basename().to_string()),
+            namespace: (!namespace.is_empty()).then_some(namespace),
+        });
+    }
+
+    if !input.contains("::") {
+        if input.contains(['"', '\\']) {
+            return Err(PolicyError::InvalidFormat(format!(
+                "unqualified entity identifier contains invalid quoting: '{input}'"
+            )));
+        }
+        return Ok(CedarParts {
+            id: input.to_string(),
             type_part: None,
             namespace: None,
         });
     }
 
-    // last segment should be `"id"`, it may be quoted, if so, strip the quotes
-    let id = parts.last().unwrap().trim_matches('"');
-    let type_part = parts[parts.len() - 2];
-
-    // everything before that is the namespace
-    let namespace = parts[..parts.len() - 2]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    // Preserve the historical unquoted-ID shorthand while using Cedar's type
+    // parser for the namespaced type. Quoted inputs must parse as a complete
+    // Cedar EntityUid above; never try to repair malformed quoting here.
+    let (type_path, id) = input.rsplit_once("::").ok_or_else(|| {
+        PolicyError::InvalidFormat(format!("invalid Cedar entity identifier: '{input}'"))
+    })?;
+    if id.is_empty() || id.contains(['"', '\\']) {
+        return Err(PolicyError::InvalidFormat(format!(
+            "invalid unquoted entity identifier in '{input}'"
+        )));
+    }
+    let type_name: EntityTypeName = type_path.parse().map_err(|e| {
+        PolicyError::InvalidFormat(format!("invalid Cedar entity type in '{input}': {e}"))
+    })?;
+    let namespace = type_name
+        .namespace_components()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
 
     Ok(CedarParts {
-        id,
-        type_part: Some(type_part.to_string()),
-        namespace: Some(namespace),
+        id: id.to_string(),
+        type_part: Some(type_name.basename().to_string()),
+        namespace: (!namespace.is_empty()).then_some(namespace),
     })
 }
 
@@ -61,7 +99,12 @@ pub struct Resource {
 
 impl Display for Resource {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, r#"{}::"{}""#, self.kind, self.id)
+        write!(
+            f,
+            r#"{}::"{}""#,
+            self.kind,
+            EntityId::new(&self.id).escaped()
+        )
     }
 }
 
@@ -81,7 +124,12 @@ impl FromStr for Resource {
                 format!("Failed to parse resource: missing type in '{s}' (expected format: ResourceType::resource_id or Namespace::ResourceType::resource_id)")
             ))?;
 
-        Ok(Resource::new(kind, parts.id.to_string()))
+        let kind = match parts.namespace {
+            Some(namespace) => format!("{}::{kind}", namespace.join("::")),
+            None => kind,
+        };
+
+        Ok(Resource::new(kind, parts.id))
     }
 }
 
@@ -98,7 +146,8 @@ impl Resource {
     /// Add an attribute to the resource, returning the updated value.
     ///
     /// For `AttrValue::Set`, values are stored as-is; duplicates are not
-    /// automatically de-duplicated.
+    /// automatically de-duplicated. The `id` key is reserved: Cedar entity
+    /// construction always replaces it with the resource's canonical ID.
     pub fn with_attr(mut self, k: impl Into<String>, v: AttrValue) -> Self {
         self.attrs.insert(k.into(), v);
         self
@@ -115,6 +164,11 @@ impl Resource {
     pub fn attrs(&mut self) -> &mut BTreeMap<String, AttrValue> {
         &mut self.attrs
     }
+
+    /// Borrow the resource attributes without allowing mutation.
+    pub fn attributes(&self) -> &BTreeMap<String, AttrValue> {
+        &self.attrs
+    }
 }
 
 impl CedarAtom for Resource {
@@ -123,35 +177,36 @@ impl CedarAtom for Resource {
     }
 
     fn cedar_id(&self) -> String {
-        format!(r#"{}::"{}""#, self.kind, self.id)
+        format!(r#"{}::"{}""#, self.kind, EntityId::new(&self.id).escaped())
     }
 
     fn cedar_entity_uid(&self) -> Result<EntityUid, PolicyError> {
-        let cedar_id = self.cedar_id();
-        EntityUid::from_str(&cedar_id).map_err(|e| {
-            PolicyError::ParseError(format!(
-                "Failed to parse resource entity UID '{}': {}",
-                cedar_id, e
-            ))
-        })
+        if self.id.is_empty() {
+            return Err(PolicyError::InvalidFormat(
+                "resource identifier cannot be empty".to_string(),
+            ));
+        }
+        let type_name: EntityTypeName = self.kind.parse().map_err(|e| {
+            PolicyError::InvalidFormat(format!("invalid resource type '{}': {e}", self.kind))
+        })?;
+        Ok(EntityUid::from_type_name_and_id(
+            type_name,
+            EntityId::new(&self.id),
+        ))
     }
 
     fn cedar_attr(&self) -> Result<HashMap<String, RestrictedExpression>, PolicyError> {
         let mut m = HashMap::with_capacity(self.attrs.len() + 1);
-        // It's often convenient to always expose `id` as an attribute too:
+        for (k, v) in &self.attrs {
+            m.insert(k.clone(), v.to_re());
+        }
+        // `id` is server-derived from the entity identity. Insert it last so
+        // caller-provided attributes cannot forge the canonical value.
         m.insert(
             "id".to_string(),
             RestrictedExpression::new_string(self.id.clone()),
         );
-        for (k, v) in &self.attrs {
-            m.insert(k.clone(), v.to_re());
-        }
         Ok(m)
-    }
-
-    // Resource-level context is optional now; leave empty by default.
-    fn cedar_ctx(&self) -> Result<Context, PolicyError> {
-        Ok(Context::empty())
     }
 }
 
@@ -195,5 +250,43 @@ mod tests {
     fn test_resource_kind_with_double_colon() {
         let resource = Resource::new("Database::Table", "users");
         assert_eq!(resource.kind(), "Database::Table");
+    }
+
+    #[test]
+    fn test_fromstr_preserves_namespaced_resource_type() {
+        let resource = Resource::from_str(r#"Database::Table::"users""#).unwrap();
+        assert_eq!(resource.kind(), "Database::Table");
+        assert_eq!(resource.id(), "users");
+        assert_eq!(resource.cedar_id(), r#"Database::Table::"users""#);
+    }
+
+    #[test]
+    fn test_fromstr_handles_escaped_and_namespaced_ids() {
+        let resource = Resource::from_str(r#"Database::Table::"users::\"archive\"""#).unwrap();
+        assert_eq!(resource.kind(), "Database::Table");
+        assert_eq!(resource.id(), "users::\"archive\"");
+        assert_eq!(
+            resource.cedar_id(),
+            r#"Database::Table::"users::\"archive\"""#
+        );
+    }
+
+    #[test]
+    fn test_fromstr_rejects_malformed_resource() {
+        for input in ["", "Host::", r#"Host::"unterminated"#] {
+            assert!(Resource::from_str(input).is_err(), "accepted {input:?}");
+        }
+    }
+
+    #[test]
+    fn caller_cannot_override_canonical_id_attribute() {
+        let resource =
+            Resource::new("Host", "canonical").with_attr("id", AttrValue::String("forged".into()));
+
+        let attrs = resource.cedar_attr().unwrap();
+        assert_eq!(
+            attrs["id"],
+            RestrictedExpression::new_string("canonical".to_string())
+        );
     }
 }

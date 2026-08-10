@@ -1,3 +1,4 @@
+#[allow(dead_code)] // Shared fixture also serves the other benchmark binaries.
 mod evaluate_common;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};

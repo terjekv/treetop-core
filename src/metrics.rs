@@ -1,4 +1,4 @@
-#![allow(dead_code)] // This entire file is feature-gated
+#![cfg_attr(not(feature = "observability"), allow(dead_code))]
 //! Vendor-agnostic metrics collection via a pluggable sink.
 //!
 //! This module provides a trait-based sink pattern that allows consumers to
@@ -80,12 +80,10 @@ use std::time::{Duration, SystemTime};
 /// let stats = EvaluationStats {
 ///     duration: Duration::from_micros(500),
 ///     allowed: true,
-///     principal_id: "User::alice".to_string(),
-///     action_id: "Action::view_host".to_string(),
 ///     matched_policies: vec!["policy0".to_string()],
 /// };
-/// println!("Evaluation: {:?}ms, allowed: {}, principal: {}, action: {}, policies: {:?}",
-///     stats.duration.as_millis(), stats.allowed, stats.principal_id, stats.action_id, stats.matched_policies);
+/// println!("Evaluation: {:?}ms, allowed: {}, policies: {:?}",
+///     stats.duration.as_millis(), stats.allowed, stats.matched_policies);
 /// # }
 /// ```
 #[derive(Debug, Clone, Serialize)]
@@ -94,10 +92,6 @@ pub struct EvaluationStats {
     pub duration: Duration,
     /// Whether the decision was Allow (true) or Deny (false)
     pub allowed: bool,
-    /// Principal identifier (e.g., "User::alice")
-    pub principal_id: String,
-    /// Action identifier (e.g., "Action::view_host")
-    pub action_id: String,
     /// Policy IDs that matched during evaluation
     pub matched_policies: Vec<String>,
 }
@@ -186,13 +180,15 @@ pub struct ReloadStats {
 /// # Default Implementation
 ///
 /// If no sink is explicitly set via [`set_sink`], a built-in no-op sink
-/// is used, so there is zero performance overhead if metrics are not needed.
+/// is used. The no-op sink disables metric payload allocation.
 ///
 /// # Thread Safety
 ///
 /// Implementations must be thread-safe because `PolicyEngine::evaluate` is
 /// thread-safe and may be called concurrently from multiple threads.
 /// Use atomic types, mutexes, or channels as appropriate.
+/// Panics raised by a sink are caught at the library boundary and do not alter
+/// authorization or reload results.
 ///
 /// # Example: Simple Counter Sink
 ///
@@ -227,6 +223,13 @@ pub struct ReloadStats {
 /// # }
 /// ```
 pub trait MetricsSink: Send + Sync {
+    /// Whether this sink currently wants evaluation metrics.
+    ///
+    /// Returning `false` avoids metric-dimension allocation on the hot path.
+    fn enabled(&self) -> bool {
+        true
+    }
+
     /// Called after each policy evaluation with timing and decision info.
     ///
     /// This method is invoked synchronously after every call to
@@ -254,10 +257,14 @@ pub trait MetricsSink: Send + Sync {
 /// No-op sink; metrics are silently dropped.
 ///
 /// This is the default sink used if none is explicitly set via [`set_sink`].
-/// It incurs zero overhead.
+/// It avoids metric payload allocation.
 struct NoOpSink;
 
 impl MetricsSink for NoOpSink {
+    fn enabled(&self) -> bool {
+        false
+    }
+
     fn on_evaluation(&self, _stats: &EvaluationStats) {}
     fn on_reload(&self, _stats: &ReloadStats) {}
 }
@@ -334,6 +341,7 @@ fn sink() -> Arc<dyn MetricsSink> {
 /// // Define or import a no-op sink
 /// struct NoOpSink;
 /// impl MetricsSink for NoOpSink {
+///     fn enabled(&self) -> bool { false }
 ///     fn on_evaluation(&self, _: &EvaluationStats) {}
 ///     fn on_reload(&self, _: &ReloadStats) {}
 /// }
@@ -357,22 +365,21 @@ pub(crate) fn get_sink() -> Arc<dyn MetricsSink> {
     sink()
 }
 
-/// Record an evaluation event.
-///
-/// This is called internally by `PolicyEngine::evaluate` and should not be
-/// called directly by consumers. It dispatches the metrics to the global sink.
-pub(crate) fn record_evaluation(stats: &EvaluationStats) {
-    let sink = get_sink();
-    sink.on_evaluation(stats);
+/// Query a sink without allowing backend panics to escape into engine logic.
+pub(crate) fn metrics_enabled(sink: &Arc<dyn MetricsSink>) -> bool {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink.enabled())).unwrap_or(false)
 }
 
-/// Record detailed phase-level metrics.
-///
-/// This is called internally by `PolicyEngine::evaluate` if phase timings
-/// are collected. It dispatches the phase metrics to the sink.
-pub(crate) fn record_evaluation_phases(stats: &EvaluationStats, phases: &EvaluationPhases) {
-    let sink = get_sink();
-    sink.on_evaluation_phases(stats, phases);
+/// Dispatch related evaluation callbacks to one consistent sink snapshot.
+pub(crate) fn record_evaluation_with_phases(
+    sink: &Arc<dyn MetricsSink>,
+    stats: &EvaluationStats,
+    phases: &EvaluationPhases,
+) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sink.on_evaluation(stats);
+        sink.on_evaluation_phases(stats, phases);
+    }));
 }
 
 /// Record a reload event.
@@ -382,19 +389,21 @@ pub(crate) fn record_evaluation_phases(stats: &EvaluationStats, phases: &Evaluat
 /// global sink.
 pub(crate) fn record_reload() {
     let sink = get_sink();
-    sink.on_reload(&ReloadStats {
-        reload_time: SystemTime::now(),
-    });
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sink.on_reload(&ReloadStats {
+            reload_time: SystemTime::now(),
+        });
+    }));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     /// A simple test sink that counts evaluations and reloads.
-    #[allow(dead_code)]
     struct TestSink {
         eval_count: AtomicU64,
         allow_count: AtomicU64,
@@ -404,7 +413,6 @@ mod tests {
         was_called: AtomicBool,
     }
 
-    #[allow(dead_code)]
     impl TestSink {
         fn new() -> Self {
             Self {
@@ -437,13 +445,29 @@ mod tests {
         }
     }
 
+    struct ReloadOnlySink {
+        reload_count: AtomicU64,
+    }
+
+    impl MetricsSink for ReloadOnlySink {
+        fn enabled(&self) -> bool {
+            false
+        }
+
+        fn on_evaluation(&self, _stats: &EvaluationStats) {
+            panic!("evaluation callbacks must be disabled");
+        }
+
+        fn on_reload(&self, _stats: &ReloadStats) {
+            self.reload_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
     #[test]
     fn test_evaluation_stats_serialization() {
         let stats = EvaluationStats {
             duration: Duration::from_millis(42),
             allowed: true,
-            principal_id: "User::test".to_string(),
-            action_id: "Action::test".to_string(),
             matched_policies: vec!["policy0".to_string()],
         };
         let json = serde_json::to_string(&stats).unwrap();
@@ -462,31 +486,29 @@ mod tests {
     }
 
     #[test]
-    fn test_record_evaluation_with_no_op_sink() {
-        // Default sink is no-op, so this should not panic
-        let stats1 = EvaluationStats {
-            duration: Duration::from_millis(100),
-            allowed: true,
-            principal_id: "User::test".to_string(),
-            action_id: "Action::test".to_string(),
-            matched_policies: vec![],
-        };
-        record_evaluation(&stats1);
+    #[serial(metrics)]
+    fn test_record_reload_dispatches_to_current_sink() {
+        let sink = Arc::new(TestSink::new());
+        set_sink(sink.clone());
 
-        let stats2 = EvaluationStats {
-            duration: Duration::from_millis(50),
-            allowed: false,
-            principal_id: "User::alice".to_string(),
-            action_id: "Action::view".to_string(),
-            matched_policies: vec![],
-        };
-        record_evaluation(&stats2);
+        record_reload();
+
+        // Reload tests elsewhere in the crate may run concurrently while this
+        // process-global sink is installed.
+        assert!(sink.reload_count.load(Ordering::SeqCst) >= 1);
     }
 
     #[test]
-    fn test_record_reload_with_no_op_sink() {
-        // Default sink is no-op, so this should not panic
+    #[serial(metrics)]
+    fn disabling_evaluations_does_not_disable_reload_events() {
+        let sink = Arc::new(ReloadOnlySink {
+            reload_count: AtomicU64::new(0),
+        });
+        set_sink(sink.clone());
+
         record_reload();
+
+        assert!(sink.reload_count.load(Ordering::SeqCst) >= 1);
     }
 
     #[test]
@@ -495,8 +517,6 @@ mod tests {
         let stats = EvaluationStats {
             duration: Duration::from_micros(1),
             allowed: true,
-            principal_id: "User::test".to_string(),
-            action_id: "Action::test".to_string(),
             matched_policies: vec![],
         };
         // Should not panic
@@ -512,15 +532,11 @@ mod tests {
         let stats1 = EvaluationStats {
             duration: Duration::from_secs(1),
             allowed: false,
-            principal_id: "User::test".to_string(),
-            action_id: "Action::test".to_string(),
             matched_policies: vec!["policy1".to_string()],
         };
         let stats2 = stats1.clone();
         assert_eq!(stats1.duration, stats2.duration);
         assert_eq!(stats1.allowed, stats2.allowed);
-        assert_eq!(stats1.principal_id, stats2.principal_id);
-        assert_eq!(stats1.action_id, stats2.action_id);
         assert_eq!(stats1.matched_policies, stats2.matched_policies);
     }
 
@@ -537,8 +553,6 @@ mod tests {
         let stats = EvaluationStats {
             duration: Duration::from_micros(250),
             allowed: true,
-            principal_id: "User::test".to_string(),
-            action_id: "Action::test".to_string(),
             matched_policies: vec![],
         };
         let debug_str = format!("{:?}", stats);
@@ -556,6 +570,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(metrics)]
     fn test_dynamic_sink_swapping() {
         // Create two different test sinks
         let sink1 = Arc::new(TestSink::new());
@@ -568,11 +583,16 @@ mod tests {
         let stats1 = EvaluationStats {
             duration: Duration::from_millis(10),
             allowed: true,
-            principal_id: "User::alice".to_string(),
-            action_id: "Action::read".to_string(),
             matched_policies: vec![],
         };
-        record_evaluation(&stats1);
+        let phases = EvaluationPhases {
+            apply_labels_ms: 0.0,
+            construct_entities_ms: 0.0,
+            resolve_groups_ms: 0.0,
+            authorize_ms: 0.0,
+            total_ms: 10.0,
+        };
+        record_evaluation_with_phases(&get_sink(), &stats1, &phases);
 
         // Swap to second sink
         set_sink(sink2.clone());
@@ -581,15 +601,14 @@ mod tests {
         let stats2 = EvaluationStats {
             duration: Duration::from_millis(20),
             allowed: false,
-            principal_id: "User::bob".to_string(),
-            action_id: "Action::write".to_string(),
             matched_policies: vec![],
         };
-        record_evaluation(&stats2);
+        record_evaluation_with_phases(&get_sink(), &stats2, &phases);
 
-        // Verify both sinks received their respective calls
-        // Note: Due to the global nature of SINK, we can't reliably test
-        // the exact counts in a test suite where multiple tests might run,
-        // but we can verify the swap mechanism doesn't panic
+        // Other unit tests may evaluate policies concurrently while a global sink is
+        // installed. Each explicit dispatch above must reach its selected sink, but
+        // those unrelated evaluations can legitimately increase either count.
+        assert!(sink1.eval_count.load(Ordering::SeqCst) >= 1);
+        assert!(sink2.eval_count.load(Ordering::SeqCst) >= 1);
     }
 }
