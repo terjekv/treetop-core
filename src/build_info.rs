@@ -1,6 +1,10 @@
 use serde::Serialize;
 use std::sync::OnceLock;
 
+#[cfg(test)]
+#[path = "../build_support.rs"]
+mod build_support;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildInfo {
     pub crate_name: &'static str,
@@ -114,5 +118,29 @@ mod tests {
     fn test_cargo_values() {
         let build_info = build_info();
         assert_eq!(build_info.crate_name, "treetop-core");
+        assert_eq!(build_info.cedar_version, "4.12");
+    }
+
+    #[test]
+    fn test_git_values_match_checkout() {
+        let Some(git) = &build_info().git else {
+            // Registry packages and source archives deliberately contain no
+            // live checkout metadata.
+            return;
+        };
+
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("git must be runnable when build metadata contains git state");
+        assert!(output.status.success());
+        assert_eq!(git.sha, String::from_utf8_lossy(&output.stdout).trim());
+
+        let output = std::process::Command::new("git")
+            .args(["status", "--porcelain", "--untracked-files=no"])
+            .output()
+            .expect("git must be runnable when build metadata contains git state");
+        assert!(output.status.success());
+        assert_eq!(git.dirty, !output.stdout.is_empty());
     }
 }

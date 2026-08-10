@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Derived regex labels now replace caller-provided output attributes, and the canonical resource `id` attribute can no longer be overwritten by caller input.
 - Policy-listing APIs default to permit candidates, exclude forbid-only actions, and expose whether unevaluated `when` or `unless` clauses are present. Listings remain non-authoritative; callers must use `PolicyEngine::evaluate` before granting access.
 - Entity parsing now uses Cedar's typed identifiers, preserves resource namespaces, escapes IDs correctly, and rejects malformed or empty values.
+- Cedar entity-conversion internals are no longer publicly exposed, preventing grouped principals from being converted without their authorization-relevant parent relationships.
 - Observability no longer records raw principal or action IDs, uses bounded example metrics, and isolates sink panics from authorization and reload results.
 - Updated the vulnerable `crossbeam-epoch` dependency and migrated the renamed IAI-Callgrind benchmark crate to Gungraun; `cargo audit --deny warnings` is enforced in CI.
 - Pinned third-party GitHub Actions and reusable workflows to commit SHAs. The performance workflow retains narrowly scoped pull-request write access for its sticky benchmark report.
@@ -31,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: Default policy listings and `PolicyEffectFilter::default()` now select permit policies instead of all effects.
 - Serialized `UserPolicies` now includes `has_non_scope_constraints` so non-Rust consumers can detect unevaluated conditions.
 - Upgraded Cedar to 4.12, declared Rust 1.89 as the minimum supported version, removed unused runtime dependencies, and moved test-only dependencies to development dependencies.
-- Build timestamps are emitted only from `SOURCE_DATE_EPOCH`; builds no longer embed the current wall-clock time.
+- Build timestamps are emitted only from `SOURCE_DATE_EPOCH`; builds no longer embed the current wall-clock time. Build metadata also supports Cargo-normalized package manifests and refreshes when Git refs, the index, tags, or tracked worktree inputs change.
 - Migrated the instruction-level benchmark suite to Gungraun 0.19.4 and the canonical Gungraun inputs in version 3 of the reusable performance workflow, while preserving benchmark target names for base/head history compatibility.
 - Restricted crate packaging to an explicit allowlist and expanded strict formatting, lint, test, documentation, snapshot, audit, and package checks in CI.
 

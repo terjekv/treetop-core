@@ -104,7 +104,6 @@ pub use engine::PolicyEngine;
 pub use error::PolicyError;
 pub use labels::{LabelRegistry, LabelRegistryBuilder, Labeler, RegexLabeler};
 pub use loader::{compile_policy, compile_policy_with_schema};
-pub use traits::CedarAtom;
 pub use types::{
     Action, AttrValue, CedarType, Decision, DecisionDiagnostics, Group, Groups, PermitPolicies,
     PermitPolicy, PolicyEffectFilter, PolicyMatch, PolicyMatchReason, PolicyVersion, Principal,
