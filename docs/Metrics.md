@@ -38,13 +38,14 @@ Callbacks run synchronously in the hot path, so implementations should be fast a
 pub struct EvaluationStats {
     pub duration: Duration,      // Total evaluation time
     pub allowed: bool,           // true = Allow, false = Deny
+    pub action_id: String,       // e.g., Action::"view_host"
     pub matched_policies: Vec<String>, // IDs of policies that matched
 }
 ```
 
 The `matched_policies` field contains the IDs of all policies that matched during evaluation. For `Allow` decisions, this typically contains permit policies. For `Deny` decisions with forbid policies, it will contain the IDs of forbid policies.
 
-Principal, resource, and action identifiers are intentionally omitted. Exporting request-controlled identifiers as metric labels can leak sensitive data and create unbounded Prometheus cardinality. Policy IDs can also accumulate across frequent reloads. If an application needs dimensions, add only bounded, allowlisted categories in its own sink.
+Principal and resource identifiers are intentionally omitted because they may be sensitive and high-cardinality. `action_id` is available for applications with a bounded, controlled action vocabulary; do not export request-controlled action values directly as labels. Policy IDs can also accumulate across frequent reloads. Export only bounded, allowlisted dimensions from a sink.
 
 ### ReloadStats
 
@@ -329,7 +330,8 @@ Useful additions:
 
 - **Evaluation latency histogram**: buckets or percentiles of `stats.duration`
 - **Reload count**: count of `on_reload()` calls
-- **Per-action/per-principal metrics** (if you add those to your sink): fine-grained insights
+- **Per-action metrics**: fine-grained insights when actions are bounded and allowlisted
+- **Per-principal metrics** (if added by the application): potentially sensitive and high-cardinality
 - **Phase timings**: time spent in label application, entity construction, authorization, group resolution
 - **Policy-specific metrics**: track individual policy usage to understand which policies are most active
 

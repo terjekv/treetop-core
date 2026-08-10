@@ -24,6 +24,7 @@ struct TestMetricsSink {
     deny_count: Arc<AtomicUsize>,
     reload_count: Arc<AtomicUsize>,
     total_duration_micros: Arc<AtomicU64>,
+    action_ids: Arc<Mutex<Vec<String>>>,
     matched_policies: Arc<Mutex<Vec<Vec<String>>>>,
     phases: Arc<Mutex<Vec<EvaluationPhases>>>,
 }
@@ -36,6 +37,7 @@ impl TestMetricsSink {
             deny_count: Arc::new(AtomicUsize::new(0)),
             reload_count: Arc::new(AtomicUsize::new(0)),
             total_duration_micros: Arc::new(AtomicU64::new(0)),
+            action_ids: Arc::new(Mutex::new(Vec::new())),
             matched_policies: Arc::new(Mutex::new(Vec::new())),
             phases: Arc::new(Mutex::new(Vec::new())),
         }
@@ -57,6 +59,10 @@ impl TestMetricsSink {
         self.matched_policies.lock().unwrap().clone()
     }
 
+    fn action_ids(&self) -> Vec<String> {
+        self.action_ids.lock().unwrap().clone()
+    }
+
     fn total_duration_ms(&self) -> f64 {
         self.total_duration_micros.load(Ordering::Relaxed) as f64 / 1_000.0
     }
@@ -73,6 +79,9 @@ impl MetricsSink for TestMetricsSink {
             self.allow_count.fetch_add(1, Ordering::Relaxed);
         } else {
             self.deny_count.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Ok(mut action_ids) = self.action_ids.lock() {
+            action_ids.push(stats.action_id.clone());
         }
         if let Ok(mut v) = self.matched_policies.lock() {
             v.push(stats.matched_policies.clone());
@@ -176,6 +185,16 @@ fn test_metrics_integration_with_dns_policy() {
         test_sink.total_duration_ms() > 0.0,
         "Should have recorded total duration"
     );
+
+    // Verify the fully qualified action dimension is available to consumers.
+    let action_ids = test_sink.action_ids();
+    for expected in ["view_host", "edit_host", "delete_host"] {
+        let expected = format!(r#"DNS::Action::"{expected}""#);
+        assert!(
+            action_ids.iter().any(|action_id| action_id == &expected),
+            "Should record action ID {expected}"
+        );
+    }
 
     // Verify matched policies are tracked
     let matched_policies = test_sink.matched_policies();

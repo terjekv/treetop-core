@@ -213,6 +213,9 @@ fn main() {
             duration: dur,
             // Simple allow/deny pattern to show both counters
             allowed: !(user == "bob" && action == "delete_host"),
+            // Available for consumers with a bounded action vocabulary. This
+            // fixed-cardinality example intentionally exports only aggregates.
+            action_id: format!(r#"Action::"{action}""#),
             matched_policies: if !(user == "bob" && action == "delete_host") {
                 vec!["policy0".to_string()]
             } else {

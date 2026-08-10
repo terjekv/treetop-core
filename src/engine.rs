@@ -702,6 +702,7 @@ impl PolicyEngine {
                 let stats = EvaluationStats {
                     duration: dur,
                     allowed,
+                    action_id: request.action.to_string(),
                     matched_policies,
                 };
                 let phases = EvaluationPhases {

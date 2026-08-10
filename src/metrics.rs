@@ -65,6 +65,8 @@ use std::time::{Duration, SystemTime};
 /// * `duration` - Total wall-clock time for the evaluation, including
 ///   label application, entity construction, and Cedar authorization.
 /// * `allowed` - `true` if the decision was `Allow`, `false` if `Deny`.
+/// * `action_id` - Fully qualified Cedar action identifier for optional,
+///   bounded metric dimensions.
 /// * `matched_policies` - List of policy IDs that matched during evaluation.
 ///   For `Allow` decisions, this contains the IDs of permit policies that matched.
 ///   For `Deny` decisions, this may contain forbid policies or be empty.
@@ -80,10 +82,11 @@ use std::time::{Duration, SystemTime};
 /// let stats = EvaluationStats {
 ///     duration: Duration::from_micros(500),
 ///     allowed: true,
+///     action_id: r#"Action::"view_host""#.to_string(),
 ///     matched_policies: vec!["policy0".to_string()],
 /// };
-/// println!("Evaluation: {:?}ms, allowed: {}, policies: {:?}",
-///     stats.duration.as_millis(), stats.allowed, stats.matched_policies);
+/// println!("Evaluation: {:?}ms, allowed: {}, action: {}, policies: {:?}",
+///     stats.duration.as_millis(), stats.allowed, stats.action_id, stats.matched_policies);
 /// # }
 /// ```
 #[derive(Debug, Clone, Serialize)]
@@ -92,6 +95,11 @@ pub struct EvaluationStats {
     pub duration: Duration,
     /// Whether the decision was Allow (true) or Deny (false)
     pub allowed: bool,
+    /// Fully qualified Cedar action identifier (e.g., `Action::"view_host"`).
+    ///
+    /// Use this as a metric label only when the application's action vocabulary
+    /// is bounded and controlled.
+    pub action_id: String,
     /// Policy IDs that matched during evaluation
     pub matched_policies: Vec<String>,
 }
@@ -468,11 +476,13 @@ mod tests {
         let stats = EvaluationStats {
             duration: Duration::from_millis(42),
             allowed: true,
+            action_id: r#"Action::"view_host""#.to_string(),
             matched_policies: vec!["policy0".to_string()],
         };
         let json = serde_json::to_string(&stats).unwrap();
         assert!(json.contains("42") || json.contains("0.042")); // millis or seconds in JSON
         assert!(json.contains("true"));
+        assert!(json.contains(r#"Action::\"view_host\""#));
         assert!(json.contains("policy0"));
     }
 
@@ -517,6 +527,7 @@ mod tests {
         let stats = EvaluationStats {
             duration: Duration::from_micros(1),
             allowed: true,
+            action_id: r#"Action::"view_host""#.to_string(),
             matched_policies: vec![],
         };
         // Should not panic
@@ -532,11 +543,13 @@ mod tests {
         let stats1 = EvaluationStats {
             duration: Duration::from_secs(1),
             allowed: false,
+            action_id: r#"Action::"delete_host""#.to_string(),
             matched_policies: vec!["policy1".to_string()],
         };
         let stats2 = stats1.clone();
         assert_eq!(stats1.duration, stats2.duration);
         assert_eq!(stats1.allowed, stats2.allowed);
+        assert_eq!(stats1.action_id, stats2.action_id);
         assert_eq!(stats1.matched_policies, stats2.matched_policies);
     }
 
@@ -553,11 +566,13 @@ mod tests {
         let stats = EvaluationStats {
             duration: Duration::from_micros(250),
             allowed: true,
+            action_id: r#"Action::"view_host""#.to_string(),
             matched_policies: vec![],
         };
         let debug_str = format!("{:?}", stats);
         assert!(debug_str.contains("EvaluationStats"));
         assert!(debug_str.contains("true"));
+        assert!(debug_str.contains("view_host"));
     }
 
     #[test]
@@ -583,6 +598,7 @@ mod tests {
         let stats1 = EvaluationStats {
             duration: Duration::from_millis(10),
             allowed: true,
+            action_id: r#"Action::"view_host""#.to_string(),
             matched_policies: vec![],
         };
         let phases = EvaluationPhases {
@@ -601,6 +617,7 @@ mod tests {
         let stats2 = EvaluationStats {
             duration: Duration::from_millis(20),
             allowed: false,
+            action_id: r#"Action::"delete_host""#.to_string(),
             matched_policies: vec![],
         };
         record_evaluation_with_phases(&get_sink(), &stats2, &phases);

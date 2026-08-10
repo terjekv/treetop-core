@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Policy-listing APIs default to permit candidates, exclude forbid-only actions, and expose whether unevaluated `when` or `unless` clauses are present. Listings remain non-authoritative; callers must use `PolicyEngine::evaluate` before granting access.
 - Entity parsing now uses Cedar's typed identifiers, preserves resource namespaces, escapes IDs correctly, and rejects malformed or empty values.
 - Cedar entity-conversion internals are no longer publicly exposed, preventing grouped principals from being converted without their authorization-relevant parent relationships.
-- Observability no longer records raw principal or action IDs, uses bounded example metrics, and isolates sink panics from authorization and reload results.
+- Observability no longer records raw principal IDs, uses bounded example metrics, and isolates sink panics from authorization and reload results. Action IDs remain available for consumers with a controlled, bounded action vocabulary.
 - Updated the vulnerable `crossbeam-epoch` dependency and migrated the renamed IAI-Callgrind benchmark crate to Gungraun; `cargo audit --deny warnings` is enforced in CI.
 - Pinned third-party GitHub Actions and reusable workflows to commit SHAs. The performance workflow retains narrowly scoped pull-request write access for its sticky benchmark report.
 
@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BREAKING**: `EvaluationStats` no longer contains `principal_id` or `action_id`.
+- **BREAKING**: `EvaluationStats` no longer contains `principal_id`; `action_id` remains available for bounded consumer metrics.
 - **BREAKING**: `PermitPolicy` and `PolicyVersion` metadata fields now use `Arc`-backed values while preserving their serialized and OpenAPI shapes.
 - **BREAKING**: `FromDecisionWithPolicy::from_decision_with_policy` now returns `Result` instead of panicking when an allow result has no permit metadata.
 - **BREAKING**: Removed unused `PolicyError` lock and qualified-ID variants and marked the enum `#[non_exhaustive]`.

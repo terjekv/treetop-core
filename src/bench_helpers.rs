@@ -176,6 +176,7 @@ static METRICS_SINK: LazyLock<Arc<CountingSink>> = LazyLock::new(|| {
 static METRICS_STATS: LazyLock<EvaluationStats> = LazyLock::new(|| EvaluationStats {
     duration: Duration::from_micros(5),
     allowed: true,
+    action_id: r#"Action::"view_host""#.to_string(),
     matched_policies: vec!["policy0".to_string(), "policy1".to_string()],
 });
 
