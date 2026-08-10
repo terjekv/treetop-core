@@ -285,3 +285,7 @@ Request {
    resource: Resource::new("House", "house-1")
 };
 ```
+
+## Releasing
+
+See [RELEASING.md](RELEASING.md) for the tag-based crates.io release process.
