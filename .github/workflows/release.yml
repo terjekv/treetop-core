@@ -78,25 +78,32 @@ jobs:
         run: |
           version="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "treetop-core") | .version')"
-          probe_dir="$(mktemp -d)"
-          mkdir -p "${probe_dir}/src"
-          touch "${probe_dir}/src/lib.rs"
-          printf '%s\n' \
-            '[package]' \
-            'name = "treetop-core-release-probe"' \
-            'version = "0.0.0"' \
-            'edition = "2024"' \
-            '' \
-            '[dependencies]' \
-            "treetop-core = \"=${version}\"" \
-            > "${probe_dir}/Cargo.toml"
-
-          if cargo metadata --manifest-path "${probe_dir}/Cargo.toml" \
-            --format-version 1 >/dev/null 2>&1; then
-            echo "published=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "published=false" >> "${GITHUB_OUTPUT}"
+          if ! status="$(curl --silent --show-error \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            --retry 3 \
+            --retry-all-errors \
+            --retry-max-time 60 \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --header 'User-Agent: treetop-core release workflow (github.com/terjekv/treetop-core)' \
+            "https://crates.io/api/v1/crates/treetop-core/${version}")"; then
+            echo "Could not determine whether treetop-core ${version} is published." >&2
+            exit 1
           fi
+
+          case "${status}" in
+            200)
+              echo "published=true" >> "${GITHUB_OUTPUT}"
+              ;;
+            404)
+              echo "published=false" >> "${GITHUB_OUTPUT}"
+              ;;
+            *)
+              echo "Unexpected crates.io response ${status}; refusing to publish." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Authenticate to crates.io
         if: steps.published.outputs.published != 'true'
