@@ -47,7 +47,7 @@ jobs:
           fi
 
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -62,7 +62,7 @@ jobs:
         run: cargo doc --locked --all-features --no-deps
 
       - name: Lint Markdown
-        run: npx --yes markdownlint-cli2@0.20.0 --config .markdownlint.json "**/*.md" "!target"
+        run: npx --yes markdownlint-cli2@0.23.2 --config .markdownlint.json "**/*.md" "!target"
 
       - name: Install cargo-insta
         uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2

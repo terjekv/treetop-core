@@ -26,13 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING**: Raised the minimum supported Rust version from 1.89 to 1.93.1 to support current dependency releases, including `serial_test` 4.0.1.
 - **BREAKING**: `EvaluationStats` no longer contains `principal_id`; `action_id` remains available for bounded consumer metrics.
 - **BREAKING**: `PermitPolicy` and `PolicyVersion` metadata fields now use `Arc`-backed values while preserving their serialized and OpenAPI shapes.
 - **BREAKING**: `FromDecisionWithPolicy::from_decision_with_policy` now returns `Result` instead of panicking when an allow result has no permit metadata.
 - **BREAKING**: Removed unused `PolicyError` lock and qualified-ID variants and marked the enum `#[non_exhaustive]`.
 - **BREAKING**: Default policy listings and `PolicyEffectFilter::default()` now select permit policies instead of all effects.
 - Serialized `UserPolicies` now includes `has_non_scope_constraints` so non-Rust consumers can detect unevaluated conditions.
-- Upgraded and exactly pinned Cedar to 4.12.0 so build metadata identifies the version actually linked, declared Rust 1.89 as the minimum supported version, removed unused runtime dependencies, and moved test-only dependencies to development dependencies.
+- Upgraded and exactly pinned Cedar to 4.12.0 so build metadata identifies the version actually linked, removed unused runtime dependencies, and moved test-only dependencies to development dependencies.
 - Build timestamps are emitted only from `SOURCE_DATE_EPOCH`; builds no longer embed the current wall-clock time. Build metadata also supports Cargo-normalized package manifests, refreshes when Git refs, the index, tags, or tracked worktree inputs change, and avoids nonexistent Git watch paths that defeat incremental builds.
 - Migrated the instruction-level benchmark suite to Gungraun 0.19.4 and the canonical Gungraun inputs in version 3 of the reusable performance workflow, while preserving benchmark target names for base/head history compatibility.
 - Restricted crate packaging to an explicit allowlist and expanded strict formatting, lint, test, documentation, snapshot, audit, and package checks in CI.
