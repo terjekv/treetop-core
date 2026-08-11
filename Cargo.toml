@@ -2,7 +2,7 @@
 name = "treetop-core"
 version = "0.0.18"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.93.1"
 autobenches = false
 license = "MIT"
 description = "Core library for Treetop, a Cedar policy engine implementation."
@@ -54,7 +54,7 @@ criterion = "0.8"
 gungraun = "0.19.4"
 insta = { version = "1", features = ["json", "serde", "redactions"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-serial_test = "3"
+serial_test = "4"
 yare = "3.0"
 
 [[example]]
