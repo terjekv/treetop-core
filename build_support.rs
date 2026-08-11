@@ -1,11 +1,12 @@
 //! Dependency-free helpers shared by the build script and its unit tests.
 
-/// Extract the `cedar-policy` version requirement from a Cargo manifest.
+/// Extract the exact `cedar-policy` version from a Cargo manifest.
 ///
 /// Cargo rewrites a source dependency such as
-/// `cedar-policy = "4.12"` into a `[dependencies.cedar-policy]` table when it
-/// packages a crate. Supporting both representations keeps build metadata
-/// correct in source checkouts and registry packages.
+/// `cedar-policy = "=4.12.0"` into a `[dependencies.cedar-policy]` table when
+/// it packages a crate. Supporting both representations keeps build metadata
+/// correct in source checkouts and registry packages. Non-exact requirements
+/// deliberately return `None`: they cannot identify the version Cargo resolved.
 pub(crate) fn cedar_policy_version(manifest: &str) -> Option<String> {
     let mut table = "";
 
@@ -30,10 +31,10 @@ pub(crate) fn cedar_policy_version(manifest: &str) -> Option<String> {
 
         if table == "dependencies" && key == "cedar-policy" {
             if let Some(version) = quoted_value(value) {
-                return normalize_requirement(version);
+                return exact_version(version);
             }
             if let Some(version) = inline_table_version(value) {
-                return normalize_requirement(version);
+                return exact_version(version);
             }
         }
 
@@ -42,7 +43,7 @@ pub(crate) fn cedar_policy_version(manifest: &str) -> Option<String> {
             "dependencies.cedar-policy" | "dependencies.\"cedar-policy\""
         ) && key == "version"
         {
-            return quoted_value(value).and_then(normalize_requirement);
+            return quoted_value(value).and_then(exact_version);
         }
     }
 
@@ -81,10 +82,8 @@ fn quoted_value(value: &str) -> Option<&str> {
     None
 }
 
-fn normalize_requirement(version: &str) -> Option<String> {
-    let version = version
-        .trim()
-        .trim_start_matches(['=', '^', '~', '>', '<', ' ']);
+fn exact_version(version: &str) -> Option<String> {
+    let version = version.trim().strip_prefix('=')?.trim();
     (!version.is_empty()).then(|| version.to_string())
 }
 
@@ -117,18 +116,18 @@ mod tests {
     fn parses_source_string_dependency() {
         let manifest = r#"
             [dependencies]
-            cedar-policy = "4.12"
+            cedar-policy = "=4.12.0"
         "#;
-        assert_eq!(cedar_policy_version(manifest).as_deref(), Some("4.12"));
+        assert_eq!(cedar_policy_version(manifest).as_deref(), Some("4.12.0"));
     }
 
     #[test]
     fn parses_source_inline_dependency() {
         let manifest = r#"
             [dependencies]
-            cedar-policy = { version = "^4.12", features = ["partial-eval"] }
+            cedar-policy = { version = "=4.12.0", features = ["partial-eval"] }
         "#;
-        assert_eq!(cedar_policy_version(manifest).as_deref(), Some("4.12"));
+        assert_eq!(cedar_policy_version(manifest).as_deref(), Some("4.12.0"));
     }
 
     #[test]
@@ -138,16 +137,25 @@ mod tests {
             version = "0.0.18"
 
             [dependencies.cedar-policy]
-            version = "4.12"
+            version = "=4.12.0"
         "#;
-        assert_eq!(cedar_policy_version(manifest).as_deref(), Some("4.12"));
+        assert_eq!(cedar_policy_version(manifest).as_deref(), Some("4.12.0"));
+    }
+
+    #[test]
+    fn rejects_a_compatible_version_requirement() {
+        let manifest = r#"
+            [dependencies]
+            cedar-policy = "4.12"
+        "#;
+        assert_eq!(cedar_policy_version(manifest), None);
     }
 
     #[test]
     fn parses_current_source_manifest() {
         assert_eq!(
             cedar_policy_version(include_str!("Cargo.toml")).as_deref(),
-            Some("4.12")
+            Some("4.12.0")
         );
     }
 }

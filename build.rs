@@ -52,6 +52,12 @@ fn absolute_git_path(manifest_dir: &Path, git_path: &str) -> Option<PathBuf> {
     .map(PathBuf::from)
 }
 
+fn insert_existing(paths: &mut BTreeSet<PathBuf>, path: Option<PathBuf>) {
+    if let Some(path) = path.filter(|path| path.exists()) {
+        paths.insert(path);
+    }
+}
+
 fn git_watch_paths(manifest_dir: &Path) -> BTreeSet<PathBuf> {
     let mut paths = BTreeSet::new();
     if git_output(manifest_dir, &["rev-parse", "--is-inside-work-tree"]).as_deref() != Some("true")
@@ -62,16 +68,14 @@ fn git_watch_paths(manifest_dir: &Path) -> BTreeSet<PathBuf> {
     // HEAD changes for detached checkouts; the resolved ref changes for an
     // ordinary commit on a branch. The index and tracked worktree files drive
     // the dirty flag, while tag and packed-ref changes affect `git describe`.
+    // Git resolves paths that do not exist yet; do not emit those because Cargo
+    // would treat a missing rerun target as perpetually changed.
     for git_path in ["HEAD", "index", "packed-refs", "refs/heads", "refs/tags"] {
-        if let Some(path) = absolute_git_path(manifest_dir, git_path) {
-            paths.insert(path);
-        }
+        insert_existing(&mut paths, absolute_git_path(manifest_dir, git_path));
     }
 
-    if let Some(symbolic_ref) = git_output(manifest_dir, &["symbolic-ref", "--quiet", "HEAD"])
-        && let Some(path) = absolute_git_path(manifest_dir, &symbolic_ref)
-    {
-        paths.insert(path);
+    if let Some(symbolic_ref) = git_output(manifest_dir, &["symbolic-ref", "--quiet", "HEAD"]) {
+        insert_existing(&mut paths, absolute_git_path(manifest_dir, &symbolic_ref));
     }
 
     if let Some(files) = git_output(manifest_dir, &["ls-files", "-z"]) {
@@ -79,7 +83,8 @@ fn git_watch_paths(manifest_dir: &Path) -> BTreeSet<PathBuf> {
             files
                 .split('\0')
                 .filter(|file| !file.is_empty())
-                .map(|file| manifest_dir.join(file)),
+                .map(|file| manifest_dir.join(file))
+                .filter(|path| path.exists()),
         );
     }
 

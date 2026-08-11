@@ -16,6 +16,7 @@ pub struct BuildInfo {
     pub target_triple: Option<&'static str>,
     pub profile: Option<&'static str>,
     pub build_unix: Option<i64>,
+    /// Exact version of the `cedar-policy` crate linked directly by Treetop.
     pub cedar_version: &'static str,
 }
 
@@ -118,7 +119,7 @@ mod tests {
     fn test_cargo_values() {
         let build_info = build_info();
         assert_eq!(build_info.crate_name, "treetop-core");
-        assert_eq!(build_info.cedar_version, "4.12");
+        assert_eq!(build_info.cedar_version, "4.12.0");
     }
 
     #[test]
