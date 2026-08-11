@@ -40,6 +40,13 @@ impl RegexLabeler {
     /// - `field`: attribute to read from (e.g., "name")
     /// - `output`: attribute to write labels to (e.g., "nameLabels")
     /// - `table`: vector of `(label, regex)` pairs
+    ///
+    /// Configure `field` and `output` as distinct attributes so repeated
+    /// application remains idempotent. `field` reads the resource attribute
+    /// map; it does not expose canonical entity fields. In particular, an
+    /// attribute named `id` is not the canonical [`Resource::id`] value during
+    /// labeling. Use a custom [`Labeler`] that reads [`Resource::id`] when
+    /// labels must derive from the resource identity.
     pub fn new(
         kind: impl Into<String>,
         field: impl Into<String>,
@@ -88,15 +95,36 @@ pub struct LabelRegistry {
     inner: ArcSwap<Vec<Arc<dyn Labeler>>>,
 }
 impl LabelRegistry {
+    /// Clone and label a resource only when at least one labeler applies.
+    ///
+    /// The first matching labeler is found before cloning so registries that
+    /// serve other resource kinds add no resource-clone cost. Each labeler's
+    /// applicability predicate is still evaluated at most once and labelers
+    /// retain insertion order.
+    pub(crate) fn apply_to_clone_if_applicable(&self, res: &Resource) -> Option<Resource> {
+        let snapshot = self.inner.load();
+        let first_match = snapshot
+            .iter()
+            .position(|labeler| labeler.applies_to(res.kind()))?;
+
+        let mut labelled = res.clone();
+        snapshot[first_match].apply(&mut labelled);
+        for labeler in &snapshot[first_match + 1..] {
+            if labeler.applies_to(labelled.kind()) {
+                labeler.apply(&mut labelled);
+            }
+        }
+        Some(labelled)
+    }
+
     /// Applies all labelers in the registry to the given resource.
     ///
     /// Labelers run in insertion order. Each labeler owns its derived output;
     /// if multiple labelers target the same attribute, the last one wins.
     pub fn apply(&self, res: &mut Resource) {
         let snapshot = self.inner.load();
-        let kind_owned = res.kind().to_owned();
         for l in snapshot.iter() {
-            if l.applies_to(&kind_owned) {
+            if l.applies_to(res.kind()) {
                 l.apply(res);
             }
         }

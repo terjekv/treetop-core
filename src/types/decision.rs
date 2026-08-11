@@ -177,6 +177,11 @@ impl Display for PolicyVersion {
 }
 
 /// Allow or deny decision, including the policy version used.
+///
+/// This is a data-transfer type with public variants and `Deserialize`; it is
+/// therefore freely constructible. Only a value returned directly by a trusted
+/// [`crate::PolicyEngine::evaluate`] call is authorization evidence. Never
+/// grant access based on a client-supplied or deserialized `Decision`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 pub enum Decision {
     Allow {

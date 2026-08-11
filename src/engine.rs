@@ -112,14 +112,13 @@ impl PolicySnapshot {
 
         let mut hasher = Sha256::new();
         hasher.update(policy_text.as_bytes());
-        let hash = hasher
-            .finalize()
-            .iter()
-            .fold(String::with_capacity(64), |mut s, b| {
-                use std::fmt::Write;
-                write!(s, "{b:02x}").unwrap();
-                s
-            });
+        let digest = hasher.finalize();
+        let mut hash = String::with_capacity(digest.len() * 2);
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        for byte in digest {
+            hash.push(char::from(HEX[usize::from(byte >> 4)]));
+            hash.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
 
         Ok(PolicySnapshot {
             set,
@@ -198,16 +197,14 @@ fn request_groups(request: &Request) -> Option<&Groups> {
 /// Apply label augmentations to a resource.
 #[inline]
 fn apply_labels(
-    registry: &Option<Arc<LabelRegistry>>,
-    resource: &mut crate::types::Resource,
+    registry: &LabelRegistry,
+    resource: &crate::types::Resource,
     timers: &mut EvalTimers,
-) {
+) -> Option<crate::types::Resource> {
     let _timer = PhaseTimer::new(&mut timers.labels);
     #[cfg(feature = "observability")]
     let _label_span = info_span!("apply_labels").entered();
-    if let Some(registry) = registry {
-        registry.apply(resource);
-    }
+    registry.apply_to_clone_if_applicable(resource)
 }
 
 /// Build the Cedar request context from the optional typed context.
@@ -226,9 +223,9 @@ fn build_effective_context(
 #[inline]
 fn build_cedar_req(
     principal_uid: &cedar_policy::EntityUid,
-    action_uid: &cedar_policy::EntityUid,
+    action_uid: cedar_policy::EntityUid,
     resource_uid: &cedar_policy::EntityUid,
-    context: &cedar_policy::Context,
+    context: cedar_policy::Context,
     schema: Option<&Schema>,
     timers: &mut EvalTimers,
 ) -> Result<CedarRequest, PolicyError> {
@@ -238,9 +235,9 @@ fn build_cedar_req(
 
     Ok(CedarRequest::new(
         principal_uid.clone(),
-        action_uid.clone(),
+        action_uid,
         resource_uid.clone(),
-        context.clone(),
+        context,
         schema,
     )?)
 }
@@ -261,11 +258,13 @@ fn build_entities(
         #[cfg(feature = "observability")]
         let _groups_span = info_span!("resolve_groups").entered();
 
-        groups
-            .into_iter()
-            .flatten()
-            .map(CedarAtom::cedar_entity_uid)
-            .collect::<Result<HashSet<_>, _>>()?
+        let mut group_uids = HashSet::with_capacity(groups.map_or(0, Groups::len));
+        if let Some(groups) = groups {
+            for group in groups {
+                group_uids.insert(group.cedar_entity_uid()?);
+            }
+        }
+        group_uids
     };
 
     // Group resolution is deliberately measured outside this phase so phase
@@ -280,13 +279,16 @@ fn build_entities(
         let resource_entity =
             cedar_policy::Entity::new(resource_uid.clone(), resource_attrs, Default::default())?;
 
-        // Construct principal entity with groups as parents
-        let principal_entity =
-            Entity::new(principal_uid.clone(), HashMap::new(), group_uids.clone())?;
+        // Construct group entities before moving the parent set into the
+        // principal. This avoids cloning the complete HashSet allocation.
+        let mut all_entities = Vec::with_capacity(group_uids.len() + 2);
+        all_entities.extend(group_uids.iter().cloned().map(Entity::with_uid));
 
-        // Construct group entities and batch all entities into a single call
-        let mut all_entities = vec![principal_entity, resource_entity];
-        all_entities.extend(group_uids.into_iter().map(Entity::with_uid));
+        // Construct principal entity with groups as parents, then batch all
+        // entities into a single call. Entity order has no Cedar semantics.
+        let principal_entity = Entity::new(principal_uid.clone(), HashMap::new(), group_uids)?;
+        all_entities.push(principal_entity);
+        all_entities.push(resource_entity);
 
         // Combine all entities in a single call to reduce overhead
         Entities::empty().add_entities(all_entities, schema)?
@@ -479,17 +481,17 @@ impl PolicyEngine {
         let principal_uid = request.principal.cedar_entity_uid()?;
         let action_uid = request.action.cedar_entity_uid()?;
 
-        let labelled_resource = if self.label_registry.is_some() {
-            let mut resource = request.resource.clone();
-            apply_labels(&self.label_registry, &mut resource, &mut timers);
+        let labelled_resource = if let Some(registry) = &self.label_registry {
+            let labelled_resource = apply_labels(registry, &request.resource, &mut timers);
+            let resource_for_metrics = labelled_resource.as_ref().unwrap_or(&request.resource);
 
             debug!(
                 event = "Request",
                 phase = "LabelsApplied",
                 time = timers.labels.as_micros(),
-                attribute_count = resource.attributes().len()
+                attribute_count = resource_for_metrics.attributes().len()
             );
-            Some(resource)
+            labelled_resource
         } else {
             debug!(
                 event = "Request",
@@ -513,9 +515,9 @@ impl PolicyEngine {
         // Build Cedar request with pre-converted UIDs
         let cedar_req = build_cedar_req(
             &principal_uid,
-            &action_uid,
+            action_uid,
             &resource_uid,
-            &context,
+            context,
             schema,
             &mut timers,
         )?;

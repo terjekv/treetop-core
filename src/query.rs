@@ -21,10 +21,10 @@ impl PrincipalQuery {
     ) -> Result<Self, PolicyError> {
         let uid = user_entity_uid(user, namespace)?;
 
-        let parents: HashSet<EntityUid> = groups
-            .iter()
-            .map(|group| group_entity_uid(group, namespace))
-            .collect::<Result<_, _>>()?;
+        let mut parents = HashSet::with_capacity(groups.len());
+        for group in groups {
+            parents.insert(group_entity_uid(group, namespace)?);
+        }
 
         Ok(Self {
             type_name: entity_type_name_from_uid(&uid),
@@ -51,11 +51,13 @@ impl PrincipalQuery {
         let type_name = entity_type_name_from_uid(&uid);
 
         let parents = match principal {
-            Principal::User(user) => user
-                .groups()
-                .into_iter()
-                .map(|group| group.cedar_entity_uid())
-                .collect::<Result<HashSet<_>, _>>()?,
+            Principal::User(user) => {
+                let mut parents = HashSet::with_capacity(user.groups().len());
+                for group in user.groups() {
+                    parents.insert(group.cedar_entity_uid()?);
+                }
+                parents
+            }
             Principal::Group(_) => {
                 let mut parents = HashSet::new();
                 // Cedar `in` includes equality for entities.

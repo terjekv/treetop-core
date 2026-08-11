@@ -49,7 +49,7 @@
 //! For **OpenTelemetry**, emit spans in `PolicyEngine::evaluate()` so consumers
 //! can add OTel instrumentation via `tracing-opentelemetry`.
 
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, Guard};
 use serde::Serialize;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
@@ -277,19 +277,19 @@ impl MetricsSink for NoOpSink {
     fn on_reload(&self, _stats: &ReloadStats) {}
 }
 
-// ArcSwap works with types implementing RefCnt. Since Arc<T> implements RefCnt,
-// we can use ArcSwap directly with Arc<dyn MetricsSink> by using from/load_full.
-// The key is using from() not from_pointee() to avoid issues with unsized types.
+// ArcSwap requires a sized pointee, so the inner Arc makes the trait object
+// sized and the ArcSwap supplies the outer Arc. Keep the load guard alive
+// through related callbacks to avoid another trait-object reference-count bump.
 static SINK: OnceLock<ArcSwap<Arc<dyn MetricsSink>>> = OnceLock::new();
 
-fn sink() -> Arc<dyn MetricsSink> {
+pub(crate) type SinkGuard = Guard<Arc<Arc<dyn MetricsSink>>>;
+
+fn sink() -> SinkGuard {
     SINK.get_or_init(|| {
         let default: Arc<dyn MetricsSink> = Arc::new(NoOpSink);
         ArcSwap::from(Arc::new(default))
     })
     .load()
-    .as_ref()
-    .clone()
 }
 
 /// Set the global metrics sink.
@@ -369,18 +369,18 @@ pub fn set_sink(sink: Arc<dyn MetricsSink>) {
 ///
 /// This is an internal function used by the engine to dispatch metrics.
 /// Most consumers should only call [`set_sink`] and implement [`MetricsSink`].
-pub(crate) fn get_sink() -> Arc<dyn MetricsSink> {
+pub(crate) fn get_sink() -> SinkGuard {
     sink()
 }
 
 /// Query a sink without allowing backend panics to escape into engine logic.
-pub(crate) fn metrics_enabled(sink: &Arc<dyn MetricsSink>) -> bool {
+pub(crate) fn metrics_enabled(sink: &SinkGuard) -> bool {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink.enabled())).unwrap_or(false)
 }
 
 /// Dispatch related evaluation callbacks to one consistent sink snapshot.
 pub(crate) fn record_evaluation_with_phases(
-    sink: &Arc<dyn MetricsSink>,
+    sink: &SinkGuard,
     stats: &EvaluationStats,
     phases: &EvaluationPhases,
 ) {

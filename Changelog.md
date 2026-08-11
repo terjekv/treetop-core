@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed redundant `Arc` layers around policy snapshots, avoided cloning resources when no label registry is configured, and eliminated repeated UID/context construction.
 - Permit-policy literals and JSON are reference-counted so allow decisions no longer deep-clone precomputed policy metadata.
 - Evaluation phase timings no longer double-count group resolution, and disabled metrics avoid policy-ID allocation.
+- Request preparation now moves owned Cedar inputs, preallocates and moves group parent sets, and skips resource cloning when no configured labeler applies. Policy listings and metrics dispatch also avoid redundant policy, ID, action, and sink-reference clones.
 
 ### Changed
 

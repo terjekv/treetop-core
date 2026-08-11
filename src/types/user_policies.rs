@@ -56,7 +56,7 @@ pub struct UserPolicies {
 impl UserPolicies {
     pub fn new(user: &str, policies: &[Policy]) -> Self {
         let mut sorted_policies = policies.to_vec();
-        sorted_policies.sort_by_key(|p| p.id().to_string());
+        sorted_policies.sort_by(|left, right| left.id().cmp(right.id()));
 
         let matches = sorted_policies
             .iter()
@@ -71,25 +71,20 @@ impl UserPolicies {
 
     pub fn new_with_matches(user: &str, matches: Vec<(Policy, Vec<PolicyMatchReason>)>) -> Self {
         let mut matches = matches;
-        matches.sort_by(|(left_policy, _), (right_policy, _)| {
-            left_policy
-                .id()
-                .to_string()
-                .cmp(&right_policy.id().to_string())
-        });
+        matches
+            .sort_by(|(left_policy, _), (right_policy, _)| left_policy.id().cmp(right_policy.id()));
 
-        let policies: Vec<Policy> = matches.iter().map(|(policy, _)| policy.clone()).collect();
-        let policy_matches = matches
-            .into_iter()
-            .map(|(policy, mut reasons)| {
-                reasons.sort();
-                reasons.dedup();
-                PolicyMatch {
-                    cedar_id: policy.id().to_string(),
-                    reasons,
-                }
-            })
-            .collect();
+        let mut policies = Vec::with_capacity(matches.len());
+        let mut policy_matches = Vec::with_capacity(matches.len());
+        for (policy, mut reasons) in matches {
+            reasons.sort();
+            reasons.dedup();
+            policy_matches.push(PolicyMatch {
+                cedar_id: policy.id().to_string(),
+                reasons,
+            });
+            policies.push(policy);
+        }
 
         Self::new_with_matches_internal(user, policies, policy_matches)
     }
@@ -99,18 +94,19 @@ impl UserPolicies {
         policies: Vec<Policy>,
         matches: Vec<PolicyMatch>,
     ) -> Self {
-        let mut actions: Vec<EntityUid> = policies
-            .iter()
-            .filter(|policy| policy.effect() == cedar_policy::Effect::Permit)
-            .flat_map(|p| match p.action_constraint() {
-                // exactly one action
-                ActionConstraint::Eq(act) => vec![act.clone()],
-                // multiple actions
-                ActionConstraint::In(acts) => acts.clone(),
-                // "any" means unconstrained — skip or handle however you like
-                ActionConstraint::Any => Vec::new(),
-            })
-            .collect();
+        let mut actions = Vec::new();
+        for policy in &policies {
+            if policy.effect() != cedar_policy::Effect::Permit {
+                continue;
+            }
+            match policy.action_constraint() {
+                ActionConstraint::Eq(action) => actions.push(action),
+                ActionConstraint::In(actions_in_policy) => actions.extend(actions_in_policy),
+                // An unconstrained action cannot be represented as a finite
+                // candidate list.
+                ActionConstraint::Any => {}
+            }
+        }
         actions.sort();
         actions.dedup();
 
