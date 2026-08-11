@@ -67,7 +67,7 @@
 //!         write!(s, "{b:02x}").unwrap();
 //!         s
 //!     });
-//! assert_eq!(engine.current_version().hash, expected_hash);
+//! assert_eq!(engine.current_version().hash.as_ref(), expected_hash);
 //!
 //! ```
 //!
@@ -98,7 +98,7 @@
 //! ```
 //!
 
-pub use build_info::build_info;
+pub use build_info::{BuildInfo, GitInfo, build_info};
 pub use cedar_policy::Schema;
 pub use engine::PolicyEngine;
 pub use error::PolicyError;
@@ -115,7 +115,6 @@ pub use types::{
 pub use metrics::{EvaluationPhases, EvaluationStats, MetricsSink, ReloadStats, set_sink};
 #[cfg(feature = "bench-internal")]
 pub mod bench_helpers;
-
 mod build_info;
 mod engine;
 mod error;
@@ -123,10 +122,11 @@ mod labels;
 mod loader;
 #[cfg(feature = "observability")]
 pub mod metrics;
-#[cfg(not(feature = "observability"))]
+#[cfg(all(not(feature = "observability"), feature = "bench-internal"))]
 mod metrics;
 mod policy_match;
 mod query;
+#[cfg(test)]
 mod tests;
 mod timers;
 mod traits;

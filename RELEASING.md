@@ -21,6 +21,7 @@ is needed.
    git push origin vX.Y.Z
    ```
 
-The release workflow checks clippy, tests, and the packaged crate before
-publishing. Rerunning it is safe when that exact version is already on
-crates.io.
+The release workflow checks formatting, strict all-target Clippy, tests,
+documentation, Markdown, snapshots, dependency advisories, and the packaged
+crate before publishing. Rerunning it is safe when that exact version is
+already on crates.io.

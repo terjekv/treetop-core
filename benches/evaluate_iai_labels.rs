@@ -1,7 +1,8 @@
+#[allow(dead_code)] // Shared fixture also serves the other benchmark binaries.
 mod evaluate_common;
 
 use evaluate_common::{Scenario, build_scenario, iai_matrix_specs_labels};
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 use std::sync::LazyLock;
 use treetop_core::Decision;

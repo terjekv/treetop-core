@@ -48,6 +48,10 @@ impl CedarAtom for Action {
     fn cedar_id(&self) -> String {
         self.id.fmt_qualified(Self::cedar_type())
     }
+
+    fn cedar_entity_uid(&self) -> Result<cedar_policy::EntityUid, PolicyError> {
+        self.id.cedar_entity_uid(Self::cedar_type())
+    }
 }
 
 impl FromStr for Action {

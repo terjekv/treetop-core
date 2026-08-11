@@ -54,8 +54,7 @@ impl RequestContext {
         Context::from_pairs(
             self.0
                 .iter()
-                .map(|(k, v)| (k.clone(), v.to_re()))
-                .collect::<Vec<_>>(),
+                .map(|(key, value)| (key.clone(), value.to_re())),
         )
         .map_err(Into::into)
     }

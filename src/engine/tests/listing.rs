@@ -46,6 +46,7 @@ fn test_serialize_user_permissions() {
     let expected: serde_json::Value = serde_json::from_str(expected_serialized).unwrap();
 
     assert_eq!(actual["user"], expected["user"]);
+    assert_eq!(actual["has_non_scope_constraints"], true);
 
     let act_arr = actual["policies"].as_array().unwrap();
     let exp_arr = expected["policies"].as_array().unwrap();
@@ -63,7 +64,7 @@ fn test_serialize_user_permissions() {
 #[parameterized(
         admins_can_view_delete = { "admin_user", vec!["admins".to_string()], 1, vec!["delete", "view"] },
         users_can_only_view = { "regular_user", vec!["users".to_string()], 1, vec!["view"] },
-        both_groups = { "super_user", vec!["admins".to_string(), "users".to_string()], 2, vec!["delete", "view", "view"] },
+        both_groups = { "super_user", vec!["admins".to_string(), "users".to_string()], 2, vec!["delete", "view"] },
         no_groups = { "bob", vec![], 0, vec![] },
     )]
 fn test_list_policies_with_groups(
@@ -127,6 +128,24 @@ fn test_list_policies_with_multiple_namespaces() {
 
     // Should match principal in Furniture::Group::"carpenters"
     assert_eq!(user_policies.policies().len(), 1);
+}
+
+#[test]
+fn test_listing_handles_entity_ids_containing_namespace_separators() {
+    let engine = PolicyEngine::new_from_str(
+        r#"permit(principal is User, action == Action::"read", resource);"#,
+    )
+    .unwrap();
+
+    let listed = engine
+        .list_policies_for_user("external::alice", &[], &[])
+        .unwrap();
+
+    assert_eq!(listed.policies().len(), 1);
+    assert_eq!(
+        listed.matches()[0].reasons,
+        vec![PolicyMatchReason::PrincipalIs]
+    );
 }
 
 #[test]
@@ -342,15 +361,26 @@ fn test_list_policies_output_is_deterministic() {
 }
 
 #[test]
-fn test_list_policies_effect_filter_defaults_to_any_and_can_filter() {
+fn test_list_policies_effect_filter_defaults_to_permit_and_can_filter() {
     let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_FORBID).unwrap();
     let resource = Resource::new("Photo", "VacationPhoto94.jpg");
 
-    // Default API includes both permit and forbid (Any).
-    let default_any = engine
+    // The safe default only returns permit candidates.
+    let default_permit = engine
         .list_policies_for_user_with_resource("alice", &[], &[], Some(&resource))
         .unwrap();
-    assert_eq!(default_any.policies().len(), 3);
+    assert_eq!(default_permit.policies().len(), 1);
+
+    let explicit_any = engine
+        .list_policies_for_user_with_resource_and_effect(
+            "alice",
+            &[],
+            &[],
+            Some(&resource),
+            PolicyEffectFilter::Any,
+        )
+        .unwrap();
+    assert_eq!(explicit_any.policies().len(), 3);
 
     let permit_only = engine
         .list_policies_for_user_with_resource_and_effect(
@@ -388,6 +418,32 @@ fn test_list_policies_effect_filter_defaults_to_any_and_can_filter() {
 }
 
 #[test]
+fn candidate_actions_exclude_forbids_and_flag_unevaluated_conditions() {
+    let policy = r#"
+permit (principal == User::"alice", action == Action::"read", resource)
+when { context.approved };
+forbid (principal == User::"alice", action == Action::"delete", resource);
+"#;
+    let engine = PolicyEngine::new_from_str(policy).unwrap();
+
+    let candidates = engine
+        .list_policies_for_user_with_resource_and_effect(
+            "alice",
+            &[],
+            &[],
+            None,
+            PolicyEffectFilter::Any,
+        )
+        .unwrap();
+
+    assert_eq!(
+        candidates.actions_by_name(),
+        vec![r#"Action::"read""#.to_string()]
+    );
+    assert!(candidates.has_non_scope_constraints());
+}
+
+#[test]
 fn test_list_policies_with_effect_consistent_with_evaluate_on_forbid_deny() {
     let engine = PolicyEngine::new_from_str(TEST_POLICY_WITH_FORBID).unwrap();
     let request = Request {
@@ -399,7 +455,10 @@ fn test_list_policies_with_effect_consistent_with_evaluate_on_forbid_deny() {
     let decision = engine.evaluate(&request).unwrap();
     assert!(matches!(decision, Deny { .. }));
 
-    let any = engine.list_policies(&request).unwrap();
+    let default_permit = engine.list_policies(&request).unwrap();
+    let any = engine
+        .list_policies_with_effect(&request, PolicyEffectFilter::Any)
+        .unwrap();
     let permit = engine
         .list_policies_with_effect(&request, PolicyEffectFilter::Permit)
         .unwrap();
@@ -409,6 +468,7 @@ fn test_list_policies_with_effect_consistent_with_evaluate_on_forbid_deny() {
 
     // Request-based listing applies action constraints, so only the matching
     // forbid policy is returned for this action.
+    assert_eq!(default_permit.policies().len(), 1);
     assert_eq!(any.policies().len(), 2);
     assert_eq!(permit.policies().len(), 1);
     assert_eq!(forbid.policies().len(), 1);
@@ -431,8 +491,16 @@ forbid (
     let engine = PolicyEngine::new_from_str(policy).unwrap();
     let resource = Resource::new("Photo", "photo.jpg");
 
-    let any = engine
+    let default_permit = engine
         .list_policies_for_group_with_resource("admins", &[], Some(&resource))
+        .unwrap();
+    let any = engine
+        .list_policies_for_group_with_resource_and_effect(
+            "admins",
+            &[],
+            Some(&resource),
+            PolicyEffectFilter::Any,
+        )
         .unwrap();
     let permit = engine
         .list_policies_for_group_with_resource_and_effect(
@@ -451,6 +519,7 @@ forbid (
         )
         .unwrap();
 
+    assert_eq!(default_permit.policies().len(), 1);
     assert_eq!(any.policies().len(), 2);
     assert_eq!(permit.policies().len(), 1);
     assert_eq!(forbid.policies().len(), 1);

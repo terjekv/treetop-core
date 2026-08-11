@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
-use cedar_policy::{Context, EntityUid, RestrictedExpression};
+use cedar_policy::{EntityUid, RestrictedExpression};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -43,13 +43,6 @@ impl CedarAtom for Principal {
         match self {
             Principal::User(user) => user.cedar_attr(),
             Principal::Group(group) => group.cedar_attr(),
-        }
-    }
-
-    fn cedar_ctx(&self) -> Result<Context, PolicyError> {
-        match self {
-            Principal::User(user) => user.cedar_ctx(),
-            Principal::Group(group) => group.cedar_ctx(),
         }
     }
 
@@ -126,15 +119,6 @@ mod tests {
         let attrs = principal.cedar_attr().unwrap();
         // Should have empty attributes by default
         assert_eq!(attrs.len(), 0);
-    }
-
-    #[test]
-    fn test_principal_cedar_ctx() {
-        let user = User::new("alice", None, None);
-        let principal = Principal::User(user);
-        let ctx = principal.cedar_ctx().unwrap();
-        // Context should be empty by default
-        assert!(format!("{:?}", ctx).contains("Context"));
     }
 
     #[test]

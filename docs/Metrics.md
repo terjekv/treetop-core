@@ -8,7 +8,7 @@ Add the `observability` feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-treetop-core = { version = "0.0.13", features = ["observability"] }
+treetop-core = { version = "0.0.18", features = ["observability"] }
 ```
 
 Without this feature, the metrics and tracing infrastructure are not included, keeping the core library lightweight.
@@ -23,12 +23,14 @@ Without this feature, the metrics and tracing infrastructure are not included, k
 
 ### MetricsSink Trait
 
-The `MetricsSink` trait has two methods:
+The `MetricsSink` trait has two required callbacks and two optional methods:
 
 - **`on_evaluation(&self, stats: &EvaluationStats)`** – called after each policy evaluation
 - **`on_reload(&self, stats: &ReloadStats)`** – called after each policy reload
+- **`enabled(&self)`** – return `false` to skip metric payload allocation
+- **`on_evaluation_phases(...)`** – optionally receive per-phase timings
 
-Both methods are invoked synchronously in the hot path, so implementations should be fast and non-blocking.
+Callbacks run synchronously in the hot path, so implementations should be fast and non-blocking. Sink panics are isolated from authorization and reload results.
 
 ### EvaluationStats
 
@@ -36,13 +38,14 @@ Both methods are invoked synchronously in the hot path, so implementations shoul
 pub struct EvaluationStats {
     pub duration: Duration,      // Total evaluation time
     pub allowed: bool,           // true = Allow, false = Deny
-    pub principal_id: String,    // e.g., "User::alice"
-    pub action_id: String,       // e.g., "Action::view_host"
+    pub action_id: String,       // e.g., Action::"view_host"
     pub matched_policies: Vec<String>, // IDs of policies that matched
 }
 ```
 
 The `matched_policies` field contains the IDs of all policies that matched during evaluation. For `Allow` decisions, this typically contains permit policies. For `Deny` decisions with forbid policies, it will contain the IDs of forbid policies.
+
+Principal and resource identifiers are intentionally omitted because they may be sensitive and high-cardinality. `action_id` is available for applications with a bounded, controlled action vocabulary; do not export request-controlled action values directly as labels. Policy IDs can also accumulate across frequent reloads. Export only bounded, allowlisted dimensions from a sink.
 
 ### ReloadStats
 
@@ -59,33 +62,32 @@ See also the [../examples/](../examples/)
 ### Prometheus
 
 ```rust
-use prometheus::{IntCounter, Histogram, Registry, TextEncoder, Encoder};
+use prometheus::{Histogram, IntCounter};
 use std::sync::Arc;
 use treetop_core::metrics::{MetricsSink, EvaluationStats, ReloadStats};
 
 struct PrometheusMetricsSink {
-    evals_total: IntCounterVec,
-    evals_allowed: IntCounterVec,
-    evals_denied: IntCounterVec,
-    eval_duration: HistogramVec,
-    policy_matches: IntCounterVec,  // Track policy match counts
+    evals_total: IntCounter,
+    evals_allowed: IntCounter,
+    evals_denied: IntCounter,
+    eval_duration: Histogram,
     reloads_total: IntCounter,
 }
 
 impl PrometheusMetricsSink {
     fn new(registry: &prometheus::Registry) -> Result<Self, Box<dyn std::error::Error>> {
-        let evals_total = IntCounterVec::new("policy_evals_total", "Total evaluations", &["principal", "action"])?;
-        let evals_allowed = IntCounterVec::new("policy_evals_allowed_total", "Allowed decisions", &["principal", "action"])?;
-        let evals_denied = IntCounterVec::new("policy_evals_denied_total", "Denied decisions", &["principal", "action"])?;
-        let eval_duration = HistogramVec::new("policy_eval_duration_seconds", "Eval latency", &["principal", "action"])?;
-        let policy_matches = IntCounterVec::new("policy_matches_total", "Policy match count", &["policy_id"])?;
+        let evals_total = IntCounter::new("policy_evals_total", "Total evaluations")?;
+        let evals_allowed = IntCounter::new("policy_evals_allowed_total", "Allowed decisions")?;
+        let evals_denied = IntCounter::new("policy_evals_denied_total", "Denied decisions")?;
+        let eval_duration = Histogram::with_opts(
+            prometheus::HistogramOpts::new("policy_eval_duration_seconds", "Eval latency")
+        )?;
         let reloads_total = IntCounter::new("policy_reloads_total", "Total reloads")?;
 
         registry.register(Box::new(evals_total.clone()))?;
         registry.register(Box::new(evals_allowed.clone()))?;
         registry.register(Box::new(evals_denied.clone()))?;
         registry.register(Box::new(eval_duration.clone()))?;
-        registry.register(Box::new(policy_matches.clone()))?;
         registry.register(Box::new(reloads_total.clone()))?;
 
         Ok(Self {
@@ -93,7 +95,6 @@ impl PrometheusMetricsSink {
             evals_allowed,
             evals_denied,
             eval_duration,
-            policy_matches,
             reloads_total,
         })
     }
@@ -101,22 +102,17 @@ impl PrometheusMetricsSink {
 
 impl MetricsSink for PrometheusMetricsSink {
     fn on_evaluation(&self, stats: &EvaluationStats) {
-        let _ = self.evals_total.with_label_values(&[&stats.principal_id, &stats.action_id]).inc();
+        self.evals_total.inc();
         if stats.allowed {
-            let _ = self.evals_allowed.with_label_values(&[&stats.principal_id, &stats.action_id]).inc();
+            self.evals_allowed.inc();
         } else {
-            let _ = self.evals_denied.with_label_values(&[&stats.principal_id, &stats.action_id]).inc();
+            self.evals_denied.inc();
         }
-        let _ = self.eval_duration.with_label_values(&[&stats.principal_id, &stats.action_id]).observe(stats.duration.as_secs_f64());
-        
-        // Track which policies matched
-        for policy_id in &stats.matched_policies {
-            let _ = self.policy_matches.with_label_values(&[policy_id]).inc();
-        }
+        self.eval_duration.observe(stats.duration.as_secs_f64());
     }
 
     fn on_reload(&self, _stats: &ReloadStats) {
-        let _ = self.reloads_total.inc();
+        self.reloads_total.inc();
     }
 }
 
@@ -334,7 +330,8 @@ Useful additions:
 
 - **Evaluation latency histogram**: buckets or percentiles of `stats.duration`
 - **Reload count**: count of `on_reload()` calls
-- **Per-action/per-principal metrics** (if you add those to your sink): fine-grained insights
+- **Per-action metrics**: fine-grained insights when actions are bounded and allowlisted
+- **Per-principal metrics** (if added by the application): potentially sensitive and high-cardinality
 - **Phase timings**: time spent in label application, entity construction, authorization, group resolution
 - **Policy-specific metrics**: track individual policy usage to understand which policies are most active
 

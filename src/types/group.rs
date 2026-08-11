@@ -48,6 +48,10 @@ impl CedarAtom for Group {
     fn cedar_id(&self) -> String {
         self.id.fmt_qualified(Self::cedar_type())
     }
+
+    fn cedar_entity_uid(&self) -> Result<cedar_policy::EntityUid, PolicyError> {
+        self.id.cedar_entity_uid(Self::cedar_type())
+    }
 }
 
 impl FromStr for Group {
@@ -136,24 +140,17 @@ mod tests {
     use yare::parameterized;
 
     #[parameterized(
-        group_unquoted_without_namespace = { "Group::admins", "admins", None },
-        group_unquoted_with_namespace = { "Infra::Group::admins", "admins", Some(vec!["Infra".to_string()]) },
-        group_unquoted_with_multiple_namespaces = { "Infra::Core::Group::admins", "admins", Some(vec!["Infra".to_string(), "Core".to_string()]) },
-        group_quoted = { "Group::\"admins\"", "admins", None },
-        group_quoted_with_namespace = { "Infra::Group::\"admins\"", "admins", Some(vec!["Infra".to_string()]) },
-        group_quoted_with_multiple_namespaces = { "Infra::Core::Group::\"admins\"", "admins", Some(vec!["Infra".to_string(), "Core".to_string()]) },
+        group_unquoted_without_namespace = { "Group::admins", "admins", vec![] },
+        group_unquoted_with_namespace = { "Infra::Group::admins", "admins", vec!["Infra".to_string()] },
+        group_unquoted_with_multiple_namespaces = { "Infra::Core::Group::admins", "admins", vec!["Infra".to_string(), "Core".to_string()] },
+        group_quoted = { "Group::\"admins\"", "admins", vec![] },
+        group_quoted_with_namespace = { "Infra::Group::\"admins\"", "admins", vec!["Infra".to_string()] },
+        group_quoted_with_multiple_namespaces = { "Infra::Core::Group::\"admins\"", "admins", vec!["Infra".to_string(), "Core".to_string()] },
     )]
-    fn test_group_from_str(
-        group_str: &str,
-        expected_id: &str,
-        expected_namespace: Option<Vec<String>>,
-    ) {
+    fn test_group_from_str(group_str: &str, expected_id: &str, expected_namespace: Vec<String>) {
         let group = Group::from_str(group_str).unwrap();
         assert_eq!(group.id.id(), expected_id);
-        assert_eq!(
-            group.id.namespace().to_vec(),
-            expected_namespace.unwrap_or_default()
-        );
+        assert_eq!(group.id.namespace(), expected_namespace);
         assert_eq!(group.cedar_id(), quote_last_element(group_str));
     }
 

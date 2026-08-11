@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- Derived regex labels now replace caller-provided output attributes, and the canonical resource `id` attribute can no longer be overwritten by caller input.
+- Policy-listing APIs default to permit candidates, exclude forbid-only actions, and expose whether unevaluated `when` or `unless` clauses are present. Listings remain non-authoritative; callers must use `PolicyEngine::evaluate` before granting access.
+- Entity parsing now uses Cedar's typed identifiers, preserves resource namespaces, escapes IDs correctly, and rejects malformed or empty values.
+- Cedar entity-conversion internals are no longer publicly exposed, preventing grouped principals from being converted without their authorization-relevant parent relationships.
+- Observability no longer records raw principal IDs, uses bounded example metrics, and isolates sink panics from authorization and reload results. Action IDs remain available for consumers with a controlled, bounded action vocabulary.
+- Updated the vulnerable `crossbeam-epoch` dependency and migrated the renamed IAI-Callgrind benchmark crate to Gungraun; `cargo audit --deny warnings` is enforced in CI.
+- Pinned third-party GitHub Actions and reusable workflows to commit SHAs. The performance workflow retains narrowly scoped pull-request write access for its sticky benchmark report.
+
+### Performance
+
+- Removed redundant `Arc` layers around policy snapshots, avoided cloning resources when no label registry is configured, and eliminated repeated UID/context construction.
+- Permit-policy literals and JSON are reference-counted so allow decisions no longer deep-clone precomputed policy metadata.
+- Evaluation phase timings no longer double-count group resolution, and disabled metrics avoid policy-ID allocation.
+- Request preparation now moves owned Cedar inputs, preallocates and moves group parent sets, and skips resource cloning when no configured labeler applies. Policy listings and metrics dispatch also avoid redundant policy, ID, action, and sink-reference clones.
+
+### Changed
+
+- **BREAKING**: `EvaluationStats` no longer contains `principal_id`; `action_id` remains available for bounded consumer metrics.
+- **BREAKING**: `PermitPolicy` and `PolicyVersion` metadata fields now use `Arc`-backed values while preserving their serialized and OpenAPI shapes.
+- **BREAKING**: `FromDecisionWithPolicy::from_decision_with_policy` now returns `Result` instead of panicking when an allow result has no permit metadata.
+- **BREAKING**: Removed unused `PolicyError` lock and qualified-ID variants and marked the enum `#[non_exhaustive]`.
+- **BREAKING**: Default policy listings and `PolicyEffectFilter::default()` now select permit policies instead of all effects.
+- Serialized `UserPolicies` now includes `has_non_scope_constraints` so non-Rust consumers can detect unevaluated conditions.
+- Upgraded and exactly pinned Cedar to 4.12.0 so build metadata identifies the version actually linked, declared Rust 1.89 as the minimum supported version, removed unused runtime dependencies, and moved test-only dependencies to development dependencies.
+- Build timestamps are emitted only from `SOURCE_DATE_EPOCH`; builds no longer embed the current wall-clock time. Build metadata also supports Cargo-normalized package manifests, refreshes when Git refs, the index, tags, or tracked worktree inputs change, and avoids nonexistent Git watch paths that defeat incremental builds.
+- Migrated the instruction-level benchmark suite to Gungraun 0.19.4 and the canonical Gungraun inputs in version 3 of the reusable performance workflow, while preserving benchmark target names for base/head history compatibility.
+- Restricted crate packaging to an explicit allowlist and expanded strict formatting, lint, test, documentation, snapshot, audit, and package checks in CI.
+
 ## [0.0.18] - 2026-07-04
 
 ### Changed

@@ -1,11 +1,10 @@
 #![cfg(feature = "observability")]
-#![allow(dead_code, unused_imports)] // This test module is only compiled with observability feature
-
 //! Metrics integration tests
 //!
 //! These tests verify that the metrics system correctly tracks evaluation statistics,
-//! including matched policy IDs. Due to the use of a global metrics sink, these tests
-//! must run serially to avoid interference. This is ensured via the #[serial] attribute.
+//! including matched policy IDs. Tests that install a global sink run serially with
+//! each other. Assertions also tolerate evaluations from unrelated parallel tests,
+//! because the sink is deliberately process-wide.
 
 use crate::metrics::{EvaluationPhases, EvaluationStats, MetricsSink, ReloadStats};
 use crate::{Action, Decision, PolicyEngine, Principal, Request, Resource, User};
@@ -13,7 +12,6 @@ use crate::{Action, Decision, PolicyEngine, Principal, Request, Resource, User};
 use serial_test::serial;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 const NAMESPACE: &str = "DNS";
 const DNS_POLICY: &str = include_str!("../../testdata/dns.cedar");
@@ -26,7 +24,6 @@ struct TestMetricsSink {
     deny_count: Arc<AtomicUsize>,
     reload_count: Arc<AtomicUsize>,
     total_duration_micros: Arc<AtomicU64>,
-    principal_ids: Arc<Mutex<Vec<String>>>,
     action_ids: Arc<Mutex<Vec<String>>>,
     matched_policies: Arc<Mutex<Vec<Vec<String>>>>,
     phases: Arc<Mutex<Vec<EvaluationPhases>>>,
@@ -40,7 +37,6 @@ impl TestMetricsSink {
             deny_count: Arc::new(AtomicUsize::new(0)),
             reload_count: Arc::new(AtomicUsize::new(0)),
             total_duration_micros: Arc::new(AtomicU64::new(0)),
-            principal_ids: Arc::new(Mutex::new(Vec::new())),
             action_ids: Arc::new(Mutex::new(Vec::new())),
             matched_policies: Arc::new(Mutex::new(Vec::new())),
             phases: Arc::new(Mutex::new(Vec::new())),
@@ -59,16 +55,12 @@ impl TestMetricsSink {
         self.deny_count.load(Ordering::Relaxed)
     }
 
-    fn principal_ids(&self) -> Vec<String> {
-        self.principal_ids.lock().unwrap().clone()
+    fn matched_policies(&self) -> Vec<Vec<String>> {
+        self.matched_policies.lock().unwrap().clone()
     }
 
     fn action_ids(&self) -> Vec<String> {
         self.action_ids.lock().unwrap().clone()
-    }
-
-    fn matched_policies(&self) -> Vec<Vec<String>> {
-        self.matched_policies.lock().unwrap().clone()
     }
 
     fn total_duration_ms(&self) -> f64 {
@@ -88,11 +80,8 @@ impl MetricsSink for TestMetricsSink {
         } else {
             self.deny_count.fetch_add(1, Ordering::Relaxed);
         }
-        if let Ok(mut v) = self.principal_ids.lock() {
-            v.push(stats.principal_id.clone());
-        }
-        if let Ok(mut v) = self.action_ids.lock() {
-            v.push(stats.action_id.clone());
+        if let Ok(mut action_ids) = self.action_ids.lock() {
+            action_ids.push(stats.action_id.clone());
         }
         if let Ok(mut v) = self.matched_policies.lock() {
             v.push(stats.matched_policies.clone());
@@ -179,49 +168,16 @@ fn test_metrics_integration_with_dns_policy() {
     let _ = run_evaluations(&engine, requests).expect("Evaluations should succeed");
 
     // Verify total evaluations
-    assert_eq!(
-        test_sink.eval_count(),
-        9,
-        "Should have recorded 9 evaluations"
+    assert!(
+        test_sink.eval_count() >= 9,
+        "Should have recorded at least the 9 requested evaluations"
     );
 
     // Verify allow/deny split
     assert_eq!(
         test_sink.allow_count() + test_sink.deny_count(),
-        9,
-        "Allow + Deny should equal total evaluations"
-    );
-
-    // Verify principals are tracked
-    let principal_ids = test_sink.principal_ids();
-    assert_eq!(principal_ids.len(), 9, "Should track all 9 evaluations");
-    assert!(
-        principal_ids.iter().any(|p| p.contains("alice")),
-        "Should track alice principals"
-    );
-    assert!(
-        principal_ids.iter().any(|p| p.contains("bob")),
-        "Should track bob principals"
-    );
-    assert!(
-        principal_ids.iter().any(|p| p.contains("charlie")),
-        "Should track charlie principals"
-    );
-
-    // Verify actions are tracked
-    let action_ids = test_sink.action_ids();
-    assert_eq!(action_ids.len(), 9, "Should track all 9 action evaluations");
-    assert!(
-        action_ids.iter().any(|a| a.contains("view_host")),
-        "Should track view_host actions"
-    );
-    assert!(
-        action_ids.iter().any(|a| a.contains("edit_host")),
-        "Should track edit_host actions"
-    );
-    assert!(
-        action_ids.iter().any(|a| a.contains("delete_host")),
-        "Should track delete_host actions"
+        test_sink.eval_count(),
+        "Every recorded evaluation should be classified as allow or deny"
     );
 
     // Verify timing was recorded
@@ -230,40 +186,22 @@ fn test_metrics_integration_with_dns_policy() {
         "Should have recorded total duration"
     );
 
-    // Count evaluations per principal
-    let alice_count = principal_ids.iter().filter(|p| p.contains("alice")).count();
-    let bob_count = principal_ids.iter().filter(|p| p.contains("bob")).count();
-    let charlie_count = principal_ids
-        .iter()
-        .filter(|p| p.contains("charlie"))
-        .count();
-    assert_eq!(alice_count, 3, "Alice should have 3 evaluations");
-    assert_eq!(bob_count, 3, "Bob should have 3 evaluations");
-    assert_eq!(charlie_count, 3, "Charlie should have 3 evaluations");
-
-    // Count evaluations per action
-    let view_count = action_ids
-        .iter()
-        .filter(|a| a.contains("view_host"))
-        .count();
-    let edit_count = action_ids
-        .iter()
-        .filter(|a| a.contains("edit_host"))
-        .count();
-    let delete_count = action_ids
-        .iter()
-        .filter(|a| a.contains("delete_host"))
-        .count();
-    assert_eq!(view_count, 3, "view_host should have 3 evaluations");
-    assert_eq!(edit_count, 3, "edit_host should have 3 evaluations");
-    assert_eq!(delete_count, 3, "delete_host should have 3 evaluations");
+    // Verify the fully qualified action dimension is available to consumers.
+    let action_ids = test_sink.action_ids();
+    for expected in ["view_host", "edit_host", "delete_host"] {
+        let expected = format!(r#"DNS::Action::"{expected}""#);
+        assert!(
+            action_ids.iter().any(|action_id| action_id == &expected),
+            "Should record action ID {expected}"
+        );
+    }
 
     // Verify matched policies are tracked
     let matched_policies = test_sink.matched_policies();
     assert_eq!(
         matched_policies.len(),
-        9,
-        "Should track matched policies for all 9 evaluations"
+        test_sink.eval_count(),
+        "Should track matched policies for every recorded evaluation"
     );
 
     // Count how many evaluations had at least one matched policy
@@ -276,11 +214,9 @@ fn test_metrics_integration_with_dns_policy() {
 #[test]
 #[serial(metrics)]
 fn test_metrics_phase_tracking() {
-    // This test verifies that phase tracking data structures are correctly populated.
-    // Since the global sink may already be set by other tests, we test by actually
-    // running an evaluation and checking that the phases data makes sense structurally.
-
     let engine = PolicyEngine::new_from_str(DNS_POLICY).expect("Failed to create engine");
+    let test_sink = TestMetricsSink::new();
+    crate::metrics::set_sink(Arc::new(test_sink.clone()));
     let ns = Some(vec![NAMESPACE.to_string()]);
 
     // Run a single evaluation
@@ -298,8 +234,21 @@ fn test_metrics_phase_tracking() {
     let result = engine.evaluate(&request);
     assert!(result.is_ok(), "Evaluation should succeed");
 
+    let observed = test_sink.phases();
+    assert!(!observed.is_empty(), "a phase sample should be emitted");
+    for observed in observed {
+        let accounted = observed.apply_labels_ms
+            + observed.construct_entities_ms
+            + observed.resolve_groups_ms
+            + observed.authorize_ms;
+        assert!(
+            accounted <= observed.total_ms,
+            "phase timings must not overlap: accounted={accounted}, total={}",
+            observed.total_ms
+        );
+    }
+
     // Test that EvaluationPhases struct can be constructed and used
-    use std::time::Duration;
     let test_phases = EvaluationPhases {
         apply_labels_ms: 0.5,
         construct_entities_ms: 1.2,
@@ -353,6 +302,42 @@ fn test_metrics_phase_tracking() {
         "Overhead should be ~1.0ms, got {}",
         overhead2
     );
+}
+
+struct PanickingSink;
+
+impl MetricsSink for PanickingSink {
+    fn on_evaluation(&self, _stats: &EvaluationStats) {
+        panic!("metrics backends must not affect authorization");
+    }
+
+    fn on_reload(&self, _stats: &ReloadStats) {
+        panic!("metrics backends must not affect reloads");
+    }
+}
+
+#[test]
+#[serial(metrics)]
+fn test_panicking_metrics_sink_is_isolated_from_engine_operations() {
+    let engine =
+        PolicyEngine::new_from_str(r#"permit(principal, action == Action::"read", resource);"#)
+            .expect("policy should compile");
+    crate::metrics::set_sink(Arc::new(PanickingSink));
+
+    let decision = engine
+        .evaluate(&Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("read", None),
+            resource: Resource::new("Document", "public"),
+        })
+        .expect("a metrics panic must not fail authorization");
+    assert!(matches!(decision, Decision::Allow { .. }));
+
+    engine
+        .reload_from_str(r#"permit(principal, action, resource);"#)
+        .expect("a metrics panic must not fail policy reload");
+
+    crate::metrics::set_sink(Arc::new(TestMetricsSink::new()));
 }
 
 #[test]
@@ -447,47 +432,27 @@ fn test_matched_policies_tracking() {
 
     // Verify matched policies
     let matched_policies = test_sink.matched_policies();
-    assert_eq!(matched_policies.len(), 4, "Should have 4 evaluations");
-
-    // Alice's evaluation should have the annotation ID
     assert!(
-        !matched_policies[0].is_empty(),
-        "Alice's evaluation should have at least one matched policy, got: {:?}",
-        matched_policies[0]
+        matched_policies
+            .iter()
+            .any(|ids| ids == &["allow_alice_read"]),
+        "Alice's permit policy should be reported: {matched_policies:?}"
     );
-    assert_eq!(
-        matched_policies[0],
-        vec!["allow_alice_read"],
-        "Alice's matched policy should be 'allow_alice_read', got: {:?}",
-        matched_policies[0]
-    );
-
-    // Bob's evaluation should have the annotation ID
     assert!(
-        !matched_policies[1].is_empty(),
-        "Bob's evaluation should have at least one matched policy, got: {:?}",
-        matched_policies[1]
+        matched_policies
+            .iter()
+            .any(|ids| ids == &["allow_bob_write"]),
+        "Bob's permit policy should be reported: {matched_policies:?}"
     );
-    assert_eq!(
-        matched_policies[1],
-        vec!["allow_bob_write"],
-        "Bob's matched policy should be 'allow_bob_write', got: {:?}",
-        matched_policies[1]
-    );
-
-    // Charlie's deny should include the matching forbid policy ID.
-    assert_eq!(
-        matched_policies[2],
-        vec!["forbid_charlie_delete"],
-        "Charlie's evaluation should include forbid policy id, got: {:?}",
-        matched_policies[2]
-    );
-
-    // David's evaluation should have no matched policies (deny by default)
     assert!(
-        matched_policies[3].is_empty(),
-        "David's evaluation should have no matched policies, got: {:?}",
-        matched_policies[3]
+        matched_policies
+            .iter()
+            .any(|ids| ids == &["forbid_charlie_delete"]),
+        "Charlie's forbid policy should be reported: {matched_policies:?}"
+    );
+    assert!(
+        matched_policies.iter().any(Vec::is_empty),
+        "David's default-deny evaluation should report no policies: {matched_policies:?}"
     );
 }
 
@@ -535,16 +500,12 @@ fn test_multiple_matched_policies() {
 
     // Verify both policies were matched
     let matched_policies = test_sink.matched_policies();
-    assert_eq!(matched_policies.len(), 1, "Should have 1 evaluation");
-    assert_eq!(
-        matched_policies[0].len(),
-        2,
-        "Should have 2 matched policies, got: {:?}",
-        matched_policies[0]
-    );
+    let policy_ids = matched_policies
+        .iter()
+        .find(|ids| ids.len() == 2 && ids.iter().all(|id| id.starts_with("policy")))
+        .expect("the evaluation should report both matching policies");
 
-    // Verify that both policies are tracked (they'll be policy0 and policy1)
-    let policy_ids = &matched_policies[0];
+    // Verify that both policies are tracked.
     assert!(
         policy_ids.iter().all(|id| id.starts_with("policy")),
         "All matched policies should be Cedar policy IDs, got: {:?}",

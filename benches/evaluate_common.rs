@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use regex::Regex;
 use std::sync::Arc;
 use treetop_core::{
@@ -72,17 +70,17 @@ fn build_registry(labelers: usize) -> Option<treetop_core::LabelRegistry> {
     }
 
     let mut builder = LabelRegistryBuilder::new();
+    let domain_regex = Regex::new(r"example\.com$").expect("benchmark regex must compile");
+    let web_regex = Regex::new(r"^web-").expect("benchmark regex must compile");
 
     for idx in 0..labelers {
-        let re1 = Regex::new(r"example\.com$").expect("benchmark regex must compile");
-        let re2 = Regex::new(r"^web-").expect("benchmark regex must compile");
         let labeler = RegexLabeler::new(
             "Host",
             "name",
             format!("name_labels_{idx}"),
             vec![
-                (format!("domain_match_{idx}"), re1),
-                (format!("web_prefix_{idx}"), re2),
+                (format!("domain_match_{idx}"), domain_regex.clone()),
+                (format!("web_prefix_{idx}"), web_regex.clone()),
             ],
         );
 
@@ -249,10 +247,6 @@ fn wide_matrix_specs_all() -> Vec<ScenarioSpec> {
     ]
 }
 
-pub fn wide_matrix_specs() -> Vec<ScenarioSpec> {
-    wide_matrix_specs_all()
-}
-
 pub fn wide_matrix_specs_baseline() -> Vec<ScenarioSpec> {
     wide_matrix_specs_all()
         .into_iter()
@@ -363,10 +357,6 @@ fn iai_matrix_specs_all() -> Vec<ScenarioSpec> {
             namespace_depth: 4,
         },
     ]
-}
-
-pub fn iai_matrix_specs() -> Vec<ScenarioSpec> {
-    iai_matrix_specs_all()
 }
 
 pub fn iai_matrix_specs_baseline() -> Vec<ScenarioSpec> {

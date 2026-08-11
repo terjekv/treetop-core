@@ -1,127 +1,101 @@
 # Performance Benchmarks
 
-This project includes two benchmark systems for the `PolicyEngine::evaluate()` hot path:
+This project uses two complementary benchmark systems:
 
-- **Criterion** for wall-clock latency/throughput trends
-- **iai-callgrind** for instruction-level deterministic regression detection
+- **Criterion** for wall-clock latency and throughput trends.
+- **Gungraun** with Valgrind/Callgrind for deterministic instruction-level
+  regression detection.
 
-Both are configured with a scenario matrix that stresses key dimensions:
-
-- policy-set size (small/medium/large)
-- allow vs deny paths
-- group cardinality
-- label-registry complexity
-- namespace depth
-- observability enabled/disabled
+The evaluation benchmarks use a scenario matrix that varies policy-set size,
+allow and deny paths, group cardinality, label-registry complexity, namespace
+depth, and whether observability is enabled.
 
 ## Bench Files
 
-- `benches/evaluate_common.rs` - shared scenario matrix + fixture builder
-- `benches/evaluate_criterion_baseline.rs` - Criterion baseline scenarios
-- `benches/evaluate_criterion_groups.rs` - Criterion group-heavy scenarios
-- `benches/evaluate_criterion_labels.rs` - Criterion label-heavy scenarios
-- `benches/evaluate_criterion_namespaced.rs` - Criterion namespaced scenarios
-- `benches/evaluate_iai_baseline.rs` - iai-callgrind baseline scenarios
-- `benches/evaluate_iai_groups.rs` - iai-callgrind group-heavy scenarios
-- `benches/evaluate_iai_labels.rs` - iai-callgrind label-heavy scenarios
-- `benches/evaluate_iai_namespaced.rs` - iai-callgrind namespaced scenarios
+- `benches/evaluate_common.rs` contains the shared scenario matrix and fixture
+  builder.
+- `benches/evaluate_criterion_*.rs` contains the Criterion evaluation slices.
+- `benches/evaluate_iai_*.rs` contains the Gungraun evaluation slices.
+- `benches/bench_iai_*.rs` contains focused Gungraun benchmarks for internal hot
+  paths.
+
+The `iai` target names are retained intentionally. Version 3 of the reusable
+workflow uses those stable names to compare a Gungraun head revision with an
+IAI-Callgrind base revision and preserve benchmark history.
 
 ## Run Locally
 
-### All benchmarks (everything)
+### Criterion
 
-```bash
-cargo bench
-```
-
-With observability enabled:
-
-```bash
-cargo bench --features observability
-```
-
-> Note: `iai-callgrind` requires Linux + Valgrind. On macOS, prefer running Criterion benches and use CI for `iai-callgrind`.
-
-### Criterion (default features)
+Run a default-feature evaluation slice:
 
 ```bash
 cargo bench --bench evaluate_criterion_baseline -- --noplot
 ```
 
-Replace `evaluate_criterion_baseline` with `evaluate_criterion_groups`, `evaluate_criterion_labels`, or `evaluate_criterion_namespaced` to run those slices.
-
-### Criterion (observability enabled)
+Run the same slice with observability enabled:
 
 ```bash
-cargo bench --bench evaluate_criterion_baseline --features observability -- --noplot
+cargo bench --bench evaluate_criterion_baseline \
+  --features observability -- --noplot
 ```
 
-### iai-callgrind (default features)
+Replace `baseline` with `groups`, `labels`, or `namespaced` for the other
+evaluation slices.
 
-Requires:
+### Gungraun
 
-- `valgrind`
-- `iai-callgrind-runner` (install with `cargo install --locked iai-callgrind-runner`)
-
-> Note: `iai-callgrind-runner` is Linux only because it depends on Valgrind/Callgrind.
+Gungraun requires Linux, Valgrind, and the runner version matching the crate:
 
 ```bash
+cargo install --locked gungraun-runner --version 0.19.4
 cargo bench --bench evaluate_iai_baseline
 ```
 
-Replace `evaluate_iai_baseline` with `evaluate_iai_groups`, `evaluate_iai_labels`, or `evaluate_iai_namespaced` to run those slices.
-
-### iai-callgrind (observability enabled)
+Run an internal hot-path target with the required feature:
 
 ```bash
-cargo bench --bench evaluate_iai_baseline --features observability
+cargo bench --bench bench_iai_query --features bench-internal
 ```
 
-### Recommended local workflow by platform
+Add `observability` to measure the enabled path:
 
-- **macOS:** Run Criterion locally (`cargo bench --bench evaluate_criterion_baseline ...`) and use CI for `iai-callgrind`.
-- **Linux:** Run both Criterion and `iai-callgrind` locally.
+```bash
+cargo bench --bench bench_iai_metrics \
+  --features bench-internal,observability
+```
+
+On macOS, run Criterion locally and use Linux CI for Gungraun/Callgrind.
 
 ## Criterion Regression Compare
 
-Use the helper script to compare two Criterion result directories:
+The local helper compares two Criterion result directories:
 
 ```bash
-python3 scripts/perf/compare_criterion.py <base_target_dir> <head_target_dir> <max_regression_pct>
+python3 scripts/perf/compare_criterion.py \
+  <base_target_dir> <head_target_dir> <max_regression_pct>
 ```
 
-Example:
-
-```bash
-python3 scripts/perf/compare_criterion.py /tmp/criterion-base-no-obs /tmp/criterion-head-no-obs 8
-```
-
-The script exits non-zero if any scenario regresses more than the threshold.
+It exits non-zero when a scenario exceeds the supplied threshold.
 
 ## CI Layout
 
-Workflow: `.github/workflows/perf.yml`
+`.github/workflows/perf.yml` calls the reviewed v3 reusable workflow at an
+immutable commit and runs both backends against the pull request base and head.
+It uses these feature sets:
 
-- **criterion-regression** (gating):
-  - checks out base commit in a worktree
-  - runs `evaluate_criterion_*` benches on base and head
-  - compares means using `scripts/perf/compare_criterion.py`
-  - fails if any scenario exceeds `PERF_MAX_REGRESSION_PCT` (default `8`)
-- **iai-callgrind-regression**:
-  - runs base as saved baseline (`--save-baseline base`)
-  - runs head against that baseline (`--baseline base`)
-  - executes with observability on/off matrix
-  - posts a PR comment with a short summary and output tail for each matrix variant
+- `no-obs`: `bench-internal`
+- `obs`: `bench-internal,observability`
 
-## Recommended Repo Workflow
+Gungraun regressions above 8% and Criterion median regressions above 10% fail
+the check. The workflow publishes one sticky pull-request report, so its token
+has `contents: read` and `pull-requests: write` permissions only.
 
-- Protect `main` and require pull requests for changes.
-- Require Perf workflow checks to pass before merge.
-- Use PR-to-`main` as the primary performance regression gate.
-- Keep direct pushes to `main` disabled except for maintainers/emergency flow.
+## Maintenance Guidance
 
-## Tuning Guidance
-
-- Start with a looser threshold (for example 8-10%) and tighten after a few weeks of data.
-- Prefer adding new scenarios only when they map to real production-like request shapes.
-- Keep matrix entries stable to preserve trend comparability over time.
+- Keep benchmark entries synchronized across `Cargo.toml`, `benches/`, and the
+  performance workflow.
+- Keep scenario and target names stable to preserve base/head and historical
+  comparisons.
+- Add scenarios only when they represent a production-relevant request shape.
+- Tune thresholds from observed CI noise; treat Criterion as the noisier signal.

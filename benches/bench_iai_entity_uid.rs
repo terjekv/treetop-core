@@ -1,4 +1,4 @@
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 use treetop_core::{action_entity_uid, group_entity_uid, resource_entity_uid, user_entity_uid};
 

@@ -69,32 +69,19 @@ impl CedarAtom for User {
     fn cedar_id(&self) -> String {
         self.id.fmt_qualified(Self::cedar_type())
     }
+
+    fn cedar_entity_uid(&self) -> Result<cedar_policy::EntityUid, PolicyError> {
+        self.id.cedar_entity_uid(Self::cedar_type())
+    }
 }
 
 impl FromStr for User {
     type Err = PolicyError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (user_part, groups_part) = if let Some(idx) = s.find('[') {
-            let (left, right) = s.split_at(idx);
-            (left.trim(), Some(right.trim()))
-        } else {
-            (s.trim(), None)
-        };
+        let (user_part, groups) = split_user_and_groups(s)?;
 
         let parts = split_string_into_cedar_parts(user_part)?;
-
-        // If there are groups, parse them
-        let groups = if let Some(groups_str) = groups_part {
-            let groups_str = groups_str.trim_matches(|c| c == '[' || c == ']');
-            let groups: Vec<String> = groups_str
-                .split(',')
-                .map(|g| g.trim().to_string())
-                .collect();
-            Some(groups)
-        } else {
-            None
-        };
 
         let expected = Self::cedar_type();
         match parts.type_part.as_deref() {
@@ -106,8 +93,77 @@ impl FromStr for User {
             _ => {}
         }
 
+        if let Some(groups) = &groups {
+            for group in groups {
+                super::Group::new(group, parts.namespace.clone()).cedar_entity_uid()?;
+            }
+        }
+
         Ok(User::new(parts.id, groups, parts.namespace))
     }
+}
+
+fn split_user_and_groups(s: &str) -> Result<(&str, Option<Vec<String>>), PolicyError> {
+    let input = s.trim();
+    let mut in_quotes = false;
+    let mut escaped = false;
+    let mut group_start = None;
+
+    for (idx, ch) in input.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_quotes => escaped = true,
+            '"' => in_quotes = !in_quotes,
+            '[' if !in_quotes => {
+                group_start = Some(idx);
+                break;
+            }
+            ']' if !in_quotes => {
+                return Err(PolicyError::InvalidFormat(format!(
+                    "unexpected group delimiter in '{input}'"
+                )));
+            }
+            _ => {}
+        }
+    }
+
+    let Some(start) = group_start else {
+        return Ok((input, None));
+    };
+    if !input.ends_with(']') {
+        return Err(PolicyError::InvalidFormat(format!(
+            "unterminated group list in '{input}'"
+        )));
+    }
+
+    let user = input[..start].trim();
+    let group_text = &input[start + 1..input.len() - 1];
+    if group_text.contains(['[', ']']) {
+        return Err(PolicyError::InvalidFormat(format!(
+            "nested or trailing group delimiters in '{input}'"
+        )));
+    }
+    if group_text.trim().is_empty() {
+        return Ok((user, None));
+    }
+
+    let groups = group_text
+        .split(',')
+        .map(str::trim)
+        .map(|group| {
+            if group.is_empty() {
+                Err(PolicyError::InvalidFormat(format!(
+                    "empty group identifier in '{input}'"
+                )))
+            } else {
+                Ok(group.to_string())
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((user, Some(groups)))
 }
 
 #[cfg(test)]
@@ -127,18 +183,17 @@ mod tests {
     }
 
     #[parameterized(
-        alice = { "User::alice", "alice", None, None },
-        alice_with_groups = { "User::alice[admins,users]", "alice", Some(vec!["admins".to_string(), "users".to_string()]), None },
-        alice_with_namespace = { "Infra::User::alice", "alice", None, Some(vec!["Infra".to_string()]) },
-        alice_with_multiple_namespaces = { "Infra::Core::User::alice", "alice", None, Some(vec!["Infra".to_string(), "Core".to_string()]) },
-        alice_with_groups_and_namespace = { "Infra::User::alice[admins,users]", "alice", Some(vec!["admins".to_string(), "users".to_string()]), Some(vec!["Infra".to_string()]) },
+        alice = { "User::alice", "alice", vec![], vec![] },
+        alice_with_groups = { "User::alice[admins,users]", "alice", vec!["admins".to_string(), "users".to_string()], vec![] },
+        alice_with_namespace = { "Infra::User::alice", "alice", vec![], vec!["Infra".to_string()] },
+        alice_with_multiple_namespaces = { "Infra::Core::User::alice", "alice", vec![], vec!["Infra".to_string(), "Core".to_string()] },
+        alice_with_groups_and_namespace = { "Infra::User::alice[admins,users]", "alice", vec!["admins".to_string(), "users".to_string()], vec!["Infra".to_string()] },
     )]
-    #[allow(clippy::unnecessary_literal_unwrap)]
     fn test_user_from_str(
         user_str: &str,
         expected_id: &str,
-        expected_groups: Option<Vec<String>>,
-        expected_namespace: Option<Vec<String>>,
+        expected_groups: Vec<String>,
+        expected_namespace: Vec<String>,
     ) {
         let user = User::from_str(user_str).unwrap();
 
@@ -158,12 +213,9 @@ mod tests {
                 .map(|g| g.id().id().to_string())
                 .collect::<Vec<_>>()
                 .len(),
-            expected_groups.as_ref().map(|g| g.len()).unwrap_or(0)
+            expected_groups.len()
         );
-        assert_eq!(
-            user.id.namespace().to_vec(),
-            expected_namespace.unwrap_or_default()
-        );
+        assert_eq!(user.id.namespace(), expected_namespace);
     }
 
     fn some_str_to_string(input: Option<Vec<&str>>) -> Option<Vec<String>> {
@@ -223,13 +275,22 @@ mod tests {
     }
 
     #[parameterized(
-        user_malformed_no_id = { "User::", "" },
         user_no_type = { "alice", "alice" },
-        user_empty_string = { "", "" },
     )]
     fn test_fromstr_edge_cases(input: &str, expected_id: &str) {
         let user = User::from_str(input).unwrap();
         assert_eq!(user.id.id(), expected_id);
+    }
+
+    #[parameterized(
+        missing_id = { "User::" },
+        empty = { "" },
+        unterminated_groups = { "User::alice[admins" },
+        trailing_group_junk = { "User::alice[admins]junk" },
+        empty_group = { "User::alice[admins,,users]" },
+    )]
+    fn test_fromstr_rejects_malformed_users(input: &str) {
+        assert!(User::from_str(input).is_err(), "accepted {input:?}");
     }
 
     #[test]

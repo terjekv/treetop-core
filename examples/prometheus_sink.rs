@@ -8,9 +8,7 @@
 //!
 //! To run: cargo run --example prometheus_sink --features observability
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -29,12 +27,6 @@ struct PrometheusStyleSink {
     bucket_bounds: &'static [f64],
     bucket_counts: Vec<AtomicU64>,
     sum_seconds: AtomicU64, // accumulate micros to avoid float atomics
-
-    // Low-cardinality label slices (per principal / per action)
-    per_user: Mutex<BTreeMap<String, u64>>,
-    per_action: Mutex<BTreeMap<String, u64>>,
-    per_user_sum_micros: Mutex<BTreeMap<String, u64>>,
-    per_action_sum_micros: Mutex<BTreeMap<String, u64>>,
 
     // Phase-level timing counters (optional, for detailed profiling)
     labels_sum_micros: AtomicU64,
@@ -58,10 +50,6 @@ impl PrometheusStyleSink {
                 .map(|_| AtomicU64::new(0))
                 .collect(),
             sum_seconds: AtomicU64::new(0),
-            per_user: Mutex::new(BTreeMap::new()),
-            per_action: Mutex::new(BTreeMap::new()),
-            per_user_sum_micros: Mutex::new(BTreeMap::new()),
-            per_action_sum_micros: Mutex::new(BTreeMap::new()),
             labels_sum_micros: AtomicU64::new(0),
             entities_sum_micros: AtomicU64::new(0),
             groups_sum_micros: AtomicU64::new(0),
@@ -94,18 +82,6 @@ impl PrometheusStyleSink {
              eval_duration_seconds_sum {}\n\
              eval_duration_seconds_count {}\n\
              \n\
-             # HELP evaluations_per_user Total evaluations per user\n\
-             # TYPE evaluations_per_user counter\n\
-             {}\
-             # HELP evaluations_per_action Total evaluations per action\n\
-             # TYPE evaluations_per_action counter\n\
-             {}\
-             # HELP eval_duration_per_user_seconds Total evaluation time per user\n\
-             # TYPE eval_duration_per_user_seconds counter\n\
-             {}\
-             # HELP eval_duration_per_action_seconds Total evaluation time per action\n\
-             # TYPE eval_duration_per_action_seconds counter\n\
-             {}\
              # HELP eval_phase_labels_seconds_total Time spent applying labels\n\
              # TYPE eval_phase_labels_seconds_total counter\n\
              eval_phase_labels_seconds_total {}\n\
@@ -126,10 +102,6 @@ impl PrometheusStyleSink {
             self.export_histogram(),
             self.sum_seconds.load(Ordering::Relaxed) as f64 / 1_000_000.0,
             self.eval_count.load(Ordering::Relaxed),
-            self.export_per_user(),
-            self.export_per_action(),
-            self.export_per_user_duration(),
-            self.export_per_action_duration(),
             self.labels_sum_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
             self.entities_sum_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
             self.groups_sum_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
@@ -151,56 +123,6 @@ impl PrometheusStyleSink {
         out.push_str(&format!(
             "eval_duration_seconds_bucket{{le=\"+Inf\"}} {cumulative}\n"
         ));
-        out
-    }
-
-    fn export_per_user(&self) -> String {
-        let mut out = String::new();
-        if let Ok(map) = self.per_user.lock() {
-            for (user, count) in map.iter() {
-                out.push_str(&format!(
-                    "evaluations_per_user{{user=\"{user}\"}} {count}\n"
-                ));
-            }
-        }
-        out
-    }
-
-    fn export_per_action(&self) -> String {
-        let mut out = String::new();
-        if let Ok(map) = self.per_action.lock() {
-            for (action, count) in map.iter() {
-                out.push_str(&format!(
-                    "evaluations_per_action{{action=\"{action}\"}} {count}\n"
-                ));
-            }
-        }
-        out
-    }
-
-    fn export_per_user_duration(&self) -> String {
-        let mut out = String::new();
-        if let Ok(map) = self.per_user_sum_micros.lock() {
-            for (user, micros) in map.iter() {
-                let secs = *micros as f64 / 1_000_000.0;
-                out.push_str(&format!(
-                    "eval_duration_per_user_seconds{{user=\"{user}\"}} {secs}\n"
-                ));
-            }
-        }
-        out
-    }
-
-    fn export_per_action_duration(&self) -> String {
-        let mut out = String::new();
-        if let Ok(map) = self.per_action_sum_micros.lock() {
-            for (action, micros) in map.iter() {
-                let secs = *micros as f64 / 1_000_000.0;
-                out.push_str(&format!(
-                    "eval_duration_per_action_seconds{{action=\"{action}\"}} {secs}\n"
-                ));
-            }
-        }
         out
     }
 }
@@ -226,22 +148,6 @@ impl MetricsSink for PrometheusStyleSink {
 
         let dur_micros = (dur_secs * 1_000_000.0) as u64;
         self.sum_seconds.fetch_add(dur_micros, Ordering::Relaxed);
-
-        // Low-cardinality labels: track per user and per action counts
-        if let Ok(mut map) = self.per_user.lock() {
-            *map.entry(stats.principal_id.clone()).or_insert(0) += 1;
-        }
-        if let Ok(mut map) = self.per_action.lock() {
-            *map.entry(stats.action_id.clone()).or_insert(0) += 1;
-        }
-
-        // Track duration sum per user and per action
-        if let Ok(mut map) = self.per_user_sum_micros.lock() {
-            *map.entry(stats.principal_id.clone()).or_insert(0) += dur_micros;
-        }
-        if let Ok(mut map) = self.per_action_sum_micros.lock() {
-            *map.entry(stats.action_id.clone()).or_insert(0) += dur_micros;
-        }
     }
 
     fn on_reload(&self, _stats: &ReloadStats) {
@@ -271,7 +177,7 @@ fn main() {
 
     let sink = Arc::new(PrometheusStyleSink::new());
 
-    // Simulated principals/actions to demonstrate per-label slices (low cardinality)
+    // Simulated principals/actions only determine the example's decision pattern.
     const USERS: &[&str] = &["alice", "bob", "charlie"];
     const ACTIONS: &[&str] = &["view_host", "edit_host", "delete_host"];
 
@@ -290,7 +196,7 @@ fn main() {
 
         // Mostly small latencies (< 2ms) with a small probability of larger outliers (5–150ms).
         let r = lcg(&mut rng);
-        let dur = if r % 20 == 0 {
+        let dur = if r.is_multiple_of(20) {
             // ~5% of the time: heavier tail between 5ms and ~150ms
             let micros = 5_000 + (r % 30) * 5_000; // 5ms to 155ms
             Duration::from_micros(micros)
@@ -307,8 +213,9 @@ fn main() {
             duration: dur,
             // Simple allow/deny pattern to show both counters
             allowed: !(user == "bob" && action == "delete_host"),
-            principal_id: format!("User::{user}"),
-            action_id: format!("Action::{action}"),
+            // Available for consumers with a bounded action vocabulary. This
+            // fixed-cardinality example intentionally exports only aggregates.
+            action_id: format!(r#"Action::"{action}""#),
             matched_policies: if !(user == "bob" && action == "delete_host") {
                 vec!["policy0".to_string()]
             } else {
