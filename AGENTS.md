@@ -191,6 +191,12 @@ benchmarks, and Gungraun/Callgrind benchmarks.
 
 ## Change Discipline
 
+- Merge pull requests into `main` with a squash merge rather than a merge commit
+  or rebase merge.
+- Use the detailed pull request description as the squash commit body. Preserve
+  its substantive summary, rationale, behavior notes, breaking-change and
+  migration guidance, and issue references, but remove verification-only
+  sections such as test commands and checklists before merging.
 - Keep edits scoped and preserve unrelated user changes in a dirty worktree.
 - Read the surrounding implementation, tests, docs, and benchmarks before
   changing authorization behavior.
