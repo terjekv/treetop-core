@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.21] - 2026-08-14
+
+### Performance
+
+- Reused typed requests now cache their validated Cedar principal, action, group, and resource identities. Evaluation also avoids redundant UID clones, inactive phase timers, and repeated disabled debug-dispatch checks; one-shot UID helpers build directly from borrowed inputs, and policy listings compare typed entity names without per-match string allocation.
+
 ## [0.0.20] - 2026-08-14
 
 ### Changed
@@ -21,7 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Performance
 
 - Allocation-conscious metrics sinks can avoid formatting an owned Cedar action ID and collecting a matched-policy `Vec<String>` on every evaluation. Added end-to-end Callgrind coverage for disabled, legacy, and borrowed sink paths.
-- Reused typed requests now cache their validated Cedar principal, action, group, and resource identities. Evaluation also avoids redundant UID clones, inactive phase timers, and repeated disabled debug-dispatch checks; one-shot UID helpers build directly from borrowed inputs, and policy listings compare typed entity names without per-match string allocation.
 
 ## [0.0.19] - 2026-08-11
 

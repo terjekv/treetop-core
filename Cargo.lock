@@ -2000,7 +2000,7 @@ dependencies = [
 
 [[package]]
 name = "treetop-core"
-version = "0.0.20"
+version = "0.0.21"
 dependencies = [
  "arc-swap",
  "cedar-policy",
