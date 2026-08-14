@@ -9,9 +9,16 @@ fn iai_phase_timer_overhead() -> u128 {
     black_box(bench_helpers::phase_timer_overhead(IAI_INNER_ITERS))
 }
 
+#[library_benchmark]
+fn iai_disabled_phase_timer_overhead() -> u128 {
+    black_box(bench_helpers::disabled_phase_timer_overhead(
+        IAI_INNER_ITERS,
+    ))
+}
+
 library_benchmark_group!(
     name = bench_timers;
-    benchmarks = iai_phase_timer_overhead
+    benchmarks = iai_phase_timer_overhead, iai_disabled_phase_timer_overhead
 );
 
 main!(library_benchmark_groups = bench_timers);

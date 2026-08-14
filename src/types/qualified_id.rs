@@ -10,6 +10,8 @@ use cedar_policy::{EntityId, EntityTypeName, EntityUid};
 
 use crate::error::PolicyError;
 
+use super::uid_cache::EntityUidCache;
+
 /// Marker type for Users
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub enum UserMarker {}
@@ -29,6 +31,8 @@ pub struct QualifiedId<T> {
     namespace: Vec<String>,
     #[serde(skip)]
     _marker: PhantomData<T>,
+    #[serde(skip)]
+    uid_cache: EntityUidCache,
 }
 
 impl<T> QualifiedId<T> {
@@ -41,6 +45,7 @@ impl<T> QualifiedId<T> {
             id: id.into(),
             namespace: namespace.unwrap_or_default(),
             _marker: PhantomData,
+            uid_cache: EntityUidCache::default(),
         }
     }
 
@@ -80,16 +85,18 @@ impl<T> QualifiedId<T> {
     }
 
     pub(crate) fn cedar_entity_uid(&self, ty: &str) -> Result<EntityUid, PolicyError> {
-        if self.id.is_empty() {
-            return Err(PolicyError::InvalidFormat(
-                "entity identifier cannot be empty".to_string(),
-            ));
-        }
-        let type_name = self.validate_namespace_with_type(ty)?;
-        Ok(EntityUid::from_type_name_and_id(
-            type_name,
-            EntityId::new(&self.id),
-        ))
+        self.uid_cache.get_or_build(|| {
+            if self.id.is_empty() {
+                return Err(PolicyError::InvalidFormat(
+                    "entity identifier cannot be empty".to_string(),
+                ));
+            }
+            let type_name = self.validate_namespace_with_type(ty)?;
+            Ok(EntityUid::from_type_name_and_id(
+                type_name,
+                EntityId::new(&self.id),
+            ))
+        })
     }
 
     fn validate_namespace_with_type(&self, ty: &str) -> Result<EntityTypeName, PolicyError> {
@@ -123,6 +130,10 @@ pub type ActionId = QualifiedId<ActionMarker>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::sync::Arc;
+    use std::thread;
 
     #[test]
     fn test_qualified_id_display() {
@@ -198,6 +209,46 @@ mod tests {
         let deserialized: UserId = serde_json::from_value(serialized).unwrap();
         assert_eq!(id.id(), deserialized.id());
         assert_eq!(id.namespace(), deserialized.namespace());
+    }
+
+    #[test]
+    fn cached_uid_does_not_change_value_semantics() {
+        let cached: UserId = QualifiedId::new("alice", Some(vec!["App".to_string()]));
+        let uncached = cached.clone();
+        cached.cedar_entity_uid("User").unwrap();
+
+        assert_eq!(cached, uncached);
+        assert_eq!(
+            serde_json::to_value(&cached).unwrap(),
+            serde_json::to_value(&uncached).unwrap()
+        );
+
+        let mut cached_hasher = DefaultHasher::new();
+        cached.hash(&mut cached_hasher);
+        let mut uncached_hasher = DefaultHasher::new();
+        uncached.hash(&mut uncached_hasher);
+        assert_eq!(cached_hasher.finish(), uncached_hasher.finish());
+    }
+
+    #[test]
+    fn cached_uid_initialization_is_thread_safe() {
+        let id = Arc::new(UserId::new(
+            "alice",
+            Some(vec!["App".to_string(), "Core".to_string()]),
+        ));
+        let handles = (0..8)
+            .map(|_| {
+                let id = Arc::clone(&id);
+                thread::spawn(move || id.cedar_entity_uid("User").unwrap())
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            assert_eq!(
+                handle.join().unwrap().to_string(),
+                r#"App::Core::User::"alice""#
+            );
+        }
     }
 
     #[test]

@@ -19,6 +19,7 @@ use crate::metrics::{
 use crate::policy_match;
 use crate::query;
 use crate::timers::PhaseTimer;
+use crate::traits::CedarAtom;
 use crate::types::{Action, AttrValue, Decision, Principal, Request, Resource, User};
 
 pub fn precompute_permit_policies_len(set: &cedar_policy::PolicySet) -> usize {
@@ -119,14 +120,14 @@ pub fn query_user_with_groups(
     let namespace_refs: Vec<&str> = namespace.iter().map(String::as_str).collect();
 
     let query = query::PrincipalQuery::for_user("alice", &group_refs, &namespace_refs)?;
-    Ok(query.parents.len() + query.type_name.len() + query.uid.to_string().len())
+    Ok(query.parents.len() + query.type_name.to_string().len() + query.uid.to_string().len())
 }
 
 pub fn query_group(namespace_depth: usize) -> Result<usize, PolicyError> {
     let namespace: Vec<String> = (0..namespace_depth).map(|idx| format!("Ns{idx}")).collect();
     let namespace_refs: Vec<&str> = namespace.iter().map(String::as_str).collect();
     let query = query::PrincipalQuery::for_group("admins", &namespace_refs)?;
-    Ok(query.parents.len() + query.type_name.len() + query.uid.to_string().len())
+    Ok(query.parents.len() + query.type_name.to_string().len() + query.uid.to_string().len())
 }
 
 pub fn query_resource(namespace_depth: usize) -> Result<usize, PolicyError> {
@@ -138,13 +139,51 @@ pub fn query_resource(namespace_depth: usize) -> Result<usize, PolicyError> {
     };
     let resource = Resource::new(kind, "web-01.example.com");
     let query = query::ResourceQuery::from_resource(&resource)?;
-    Ok(query.uid.to_string().len() + query.type_name.len())
+    Ok(query.uid.to_string().len() + query.type_name.to_string().len())
+}
+
+static REUSED_UID_REQUEST: LazyLock<Request> = LazyLock::new(|| Request {
+    principal: Principal::User(User::new(
+        "alice",
+        Some(vec![
+            "admins".to_string(),
+            "developers".to_string(),
+            "operators".to_string(),
+        ]),
+        Some(vec!["App".to_string(), "Core".to_string()]),
+    )),
+    action: Action::new(
+        "view_host",
+        Some(vec!["App".to_string(), "Core".to_string()]),
+    ),
+    resource: Resource::new("App::Core::Host", "web-01.example.com"),
+});
+
+pub fn reused_request_uids() -> Result<usize, PolicyError> {
+    let request = &*REUSED_UID_REQUEST;
+    let mut score = request.principal.cedar_entity_uid()?.id().unescaped().len()
+        + request.action.cedar_entity_uid()?.id().unescaped().len()
+        + request.resource.cedar_entity_uid()?.id().unescaped().len();
+    if let Principal::User(user) = &request.principal {
+        for group in user.groups() {
+            score += group.cedar_entity_uid()?.id().unescaped().len();
+        }
+    }
+    Ok(score)
 }
 
 pub fn phase_timer_overhead(iters: usize) -> u128 {
     let mut total = Duration::ZERO;
     for _ in 0..iters {
         let _timer = PhaseTimer::new(&mut total);
+    }
+    total.as_nanos()
+}
+
+pub fn disabled_phase_timer_overhead(iters: usize) -> u128 {
+    let mut total = Duration::ZERO;
+    for _ in 0..iters {
+        let _timer = PhaseTimer::new_if(&mut total, false);
     }
     total.as_nanos()
 }

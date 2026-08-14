@@ -1,5 +1,6 @@
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
+use treetop_core::bench_helpers;
 use treetop_core::{action_entity_uid, group_entity_uid, resource_entity_uid, user_entity_uid};
 
 const IAI_INNER_ITERS: usize = 2_000;
@@ -72,9 +73,14 @@ fn iai_resource_uid() -> usize {
     run_many(resource_uid)
 }
 
+#[library_benchmark]
+fn iai_reused_request_uids() -> usize {
+    run_many(|| bench_helpers::reused_request_uids().expect("benchmark request UIDs must build"))
+}
+
 library_benchmark_group!(
     name = bench_entity_uid;
-    benchmarks = iai_user_uid_no_ns, iai_user_uid_with_ns, iai_group_uid_no_ns, iai_action_uid_with_ns, iai_resource_uid
+    benchmarks = iai_user_uid_no_ns, iai_user_uid_with_ns, iai_group_uid_no_ns, iai_action_uid_with_ns, iai_resource_uid, iai_reused_request_uids
 );
 
 main!(library_benchmark_groups = bench_entity_uid);
