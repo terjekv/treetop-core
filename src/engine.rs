@@ -43,7 +43,11 @@ fn get_authorizer() -> &'static Authorizer {
 #[derive(Debug)]
 struct EvalTimers {
     /// Total elapsed time from start of evaluation
-    total_start: Instant,
+    total_start: Option<Instant>,
+    /// Whether individual phase timers should sample the clock.
+    measure_enabled: bool,
+    /// Whether debug tracing was enabled when evaluation started.
+    debug_enabled: bool,
     /// Time spent applying labels
     labels: Duration,
     /// Time spent constructing Cedar request
@@ -57,9 +61,11 @@ struct EvalTimers {
 }
 
 impl EvalTimers {
-    fn start() -> Self {
+    fn start(measure_enabled: bool, debug_enabled: bool) -> Self {
         Self {
-            total_start: Instant::now(),
+            total_start: measure_enabled.then(Instant::now),
+            measure_enabled,
+            debug_enabled,
             labels: Duration::ZERO,
             construct_req: Duration::ZERO,
             entities: Duration::ZERO,
@@ -69,7 +75,8 @@ impl EvalTimers {
     }
 
     fn total_elapsed(&self) -> Duration {
-        self.total_start.elapsed()
+        self.total_start
+            .map_or(Duration::ZERO, |start| start.elapsed())
     }
 }
 
@@ -79,6 +86,10 @@ struct PreparedRequest {
     entities: Entities,
     snapshot: Snapshot,
     timers: EvalTimers,
+    #[cfg(feature = "observability")]
+    sink: crate::metrics::SinkGuard,
+    #[cfg(feature = "observability")]
+    metrics_enabled: bool,
 }
 
 /// Immutable snapshot of a compiled policy set, along with metadata.
@@ -201,7 +212,8 @@ fn apply_labels(
     resource: &crate::types::Resource,
     timers: &mut EvalTimers,
 ) -> Option<crate::types::Resource> {
-    let _timer = PhaseTimer::new(&mut timers.labels);
+    let measure_enabled = timers.measure_enabled;
+    let _timer = PhaseTimer::new_if(&mut timers.labels, measure_enabled);
     #[cfg(feature = "observability")]
     let _label_span = info_span!("apply_labels").entered();
     registry.apply_to_clone_if_applicable(resource)
@@ -222,21 +234,22 @@ fn build_effective_context(
 /// UIDs should be pre-converted to avoid redundant conversions.
 #[inline]
 fn build_cedar_req(
-    principal_uid: &cedar_policy::EntityUid,
+    principal_uid: cedar_policy::EntityUid,
     action_uid: cedar_policy::EntityUid,
-    resource_uid: &cedar_policy::EntityUid,
+    resource_uid: cedar_policy::EntityUid,
     context: cedar_policy::Context,
     schema: Option<&Schema>,
     timers: &mut EvalTimers,
 ) -> Result<CedarRequest, PolicyError> {
-    let _timer = PhaseTimer::new(&mut timers.construct_req);
+    let measure_enabled = timers.measure_enabled;
+    let _timer = PhaseTimer::new_if(&mut timers.construct_req, measure_enabled);
     #[cfg(feature = "observability")]
     let _req_span = info_span!("construct_cedar_req").entered();
 
     Ok(CedarRequest::new(
-        principal_uid.clone(),
+        principal_uid,
         action_uid,
-        resource_uid.clone(),
+        resource_uid,
         context,
         schema,
     )?)
@@ -246,15 +259,16 @@ fn build_cedar_req(
 /// UIDs should be pre-converted to avoid redundant conversions.
 #[inline]
 fn build_entities(
-    principal_uid: &cedar_policy::EntityUid,
-    resource_uid: &cedar_policy::EntityUid,
+    principal_uid: cedar_policy::EntityUid,
+    resource_uid: cedar_policy::EntityUid,
     resource: &crate::types::Resource,
     groups: Option<&Groups>,
     schema: Option<&Schema>,
     timers: &mut EvalTimers,
 ) -> Result<Entities, PolicyError> {
     let group_uids = {
-        let _timer = PhaseTimer::new(&mut timers.groups);
+        let measure_enabled = timers.measure_enabled;
+        let _timer = PhaseTimer::new_if(&mut timers.groups, measure_enabled);
         #[cfg(feature = "observability")]
         let _groups_span = info_span!("resolve_groups").entered();
 
@@ -270,14 +284,15 @@ fn build_entities(
     // Group resolution is deliberately measured outside this phase so phase
     // totals are non-overlapping.
     let entities = {
-        let _timer = PhaseTimer::new(&mut timers.entities);
+        let measure_enabled = timers.measure_enabled;
+        let _timer = PhaseTimer::new_if(&mut timers.entities, measure_enabled);
         #[cfg(feature = "observability")]
         let _entity_span = info_span!("construct_entities").entered();
 
         // Construct resource entity
         let resource_attrs = resource.cedar_attr()?;
         let resource_entity =
-            cedar_policy::Entity::new(resource_uid.clone(), resource_attrs, Default::default())?;
+            cedar_policy::Entity::new(resource_uid, resource_attrs, Default::default())?;
 
         // Construct group entities before moving the parent set into the
         // principal. This avoids cloning the complete HashSet allocation.
@@ -286,7 +301,7 @@ fn build_entities(
 
         // Construct principal entity with groups as parents, then batch all
         // entities into a single call. Entity order has no Cedar semantics.
-        let principal_entity = Entity::new(principal_uid.clone(), HashMap::new(), group_uids)?;
+        let principal_entity = Entity::new(principal_uid, HashMap::new(), group_uids)?;
         all_entities.push(principal_entity);
         all_entities.push(resource_entity);
 
@@ -294,12 +309,14 @@ fn build_entities(
         Entities::empty().add_entities(all_entities, schema)?
     };
 
-    debug!(
-        event = "Request",
-        phase = "Entities",
-        time = timers.entities.as_micros(),
-        entity_count = entities.iter().count()
-    );
+    if timers.debug_enabled {
+        debug!(
+            event = "Request",
+            phase = "Entities",
+            time = timers.entities.as_micros(),
+            entity_count = entities.iter().count()
+        );
+    }
 
     Ok(entities)
 }
@@ -467,15 +484,24 @@ impl PolicyEngine {
     ) -> Result<PreparedRequest, PolicyError> {
         let snapshot = self.current_snapshot();
         let schema = snapshot.schema();
-        let mut timers = EvalTimers::start();
+        #[cfg(feature = "observability")]
+        let sink = get_sink();
+        #[cfg(feature = "observability")]
+        let metrics_enabled = metrics_enabled(&sink);
+        #[cfg(not(feature = "observability"))]
+        let metrics_enabled = false;
+        let debug_enabled = tracing::enabled!(tracing::Level::DEBUG);
+        let mut timers = EvalTimers::start(debug_enabled || metrics_enabled, debug_enabled);
 
         let groups = request_groups(request);
 
-        debug!(
-            event = "Request",
-            phase = "Evaluation",
-            group_count = groups.map_or(0, Groups::len)
-        );
+        if timers.debug_enabled {
+            debug!(
+                event = "Request",
+                phase = "Evaluation",
+                group_count = groups.map_or(0, Groups::len)
+            );
+        }
 
         // Convert each UID once after trusted label derivation is complete.
         let principal_uid = request.principal.cedar_entity_uid()?;
@@ -483,40 +509,51 @@ impl PolicyEngine {
 
         let labelled_resource = if let Some(registry) = &self.label_registry {
             let labelled_resource = apply_labels(registry, &request.resource, &mut timers);
-            let resource_for_metrics = labelled_resource.as_ref().unwrap_or(&request.resource);
-
-            debug!(
-                event = "Request",
-                phase = "LabelsApplied",
-                time = timers.labels.as_micros(),
-                attribute_count = resource_for_metrics.attributes().len()
-            );
+            if timers.debug_enabled {
+                let resource_for_metrics = labelled_resource.as_ref().unwrap_or(&request.resource);
+                debug!(
+                    event = "Request",
+                    phase = "LabelsApplied",
+                    time = timers.labels.as_micros(),
+                    attribute_count = resource_for_metrics.attributes().len()
+                );
+            }
             labelled_resource
         } else {
-            debug!(
-                event = "Request",
-                phase = "LabelsApplied",
-                time = timers.labels.as_micros()
-            );
+            if timers.debug_enabled {
+                debug!(
+                    event = "Request",
+                    phase = "LabelsApplied",
+                    time = timers.labels.as_micros()
+                );
+            }
             None
         };
         let resource_for_entities = labelled_resource.as_ref().unwrap_or(&request.resource);
         let resource_uid = resource_for_entities.cedar_entity_uid()?;
         let context = build_effective_context(request_context)?;
 
-        debug!(
-            event = "Request",
-            phase = "Parsed",
-            group_count = groups.map_or(0, Groups::len),
-            attribute_count = resource_for_entities.attributes().len(),
-            request_context_attribute_count = request_context.map_or(0, RequestContext::len)
-        );
+        if timers.debug_enabled {
+            debug!(
+                event = "Request",
+                phase = "Parsed",
+                group_count = groups.map_or(0, Groups::len),
+                attribute_count = resource_for_entities.attributes().len(),
+                request_context_attribute_count = request_context.map_or(0, RequestContext::len)
+            );
+        }
+
+        // The request and entity graph both own the same principal and resource
+        // IDs. Clone each UID once, then move both copies into Cedar instead of
+        // cloning again inside both builders.
+        let principal_uid_for_entities = principal_uid.clone();
+        let resource_uid_for_entities = resource_uid.clone();
 
         // Build Cedar request with pre-converted UIDs
         let cedar_req = build_cedar_req(
-            &principal_uid,
+            principal_uid,
             action_uid,
-            &resource_uid,
+            resource_uid,
             context,
             schema,
             &mut timers,
@@ -524,25 +561,31 @@ impl PolicyEngine {
 
         // Build entities with pre-converted UIDs and potentially-modified resource
         let entities = build_entities(
-            &principal_uid,
-            &resource_uid,
+            principal_uid_for_entities,
+            resource_uid_for_entities,
             resource_for_entities,
             groups,
             schema,
             &mut timers,
         )?;
 
-        debug!(
-            event = "Request",
-            phase = "GroupsResolved",
-            time = timers.groups.as_micros(),
-        );
+        if timers.debug_enabled {
+            debug!(
+                event = "Request",
+                phase = "GroupsResolved",
+                time = timers.groups.as_micros(),
+            );
+        }
 
         Ok(PreparedRequest {
             cedar_req,
             entities,
             snapshot,
             timers,
+            #[cfg(feature = "observability")]
+            sink,
+            #[cfg(feature = "observability")]
+            metrics_enabled,
         })
     }
 
@@ -645,7 +688,8 @@ impl PolicyEngine {
 
         // Perform authorization with RAII timing (using cached Authorizer)
         let result = {
-            let _timer = PhaseTimer::new(&mut prepared.timers.authz);
+            let measure_enabled = prepared.timers.measure_enabled;
+            let _timer = PhaseTimer::new_if(&mut prepared.timers.authz, measure_enabled);
             #[cfg(feature = "observability")]
             let _authz_span = info_span!("authorize").entered();
             get_authorizer().is_authorized(
@@ -655,27 +699,26 @@ impl PolicyEngine {
             )
         };
 
-        debug!(
-            event = "Request",
-            phase = "Authorized",
-            time = prepared.timers.authz.as_micros(),
-            decision = ?result.decision(),
-        );
+        if prepared.timers.debug_enabled {
+            debug!(
+                event = "Request",
+                phase = "Authorized",
+                time = prepared.timers.authz.as_micros(),
+                decision = ?result.decision(),
+            );
+        }
 
         let version = prepared.snapshot.version();
-        debug!(
-            event = "Request",
-            phase = "Result",
-            time = prepared.timers.total_elapsed().as_micros(),
-            result = ?result.decision(),
-            policy_hash = %version.hash,
-            policy_loaded_at = %version.loaded_at,
-        );
-
-        #[cfg(feature = "observability")]
-        let sink = get_sink();
-        #[cfg(feature = "observability")]
-        let metrics_are_enabled = metrics_enabled(&sink);
+        if prepared.timers.debug_enabled {
+            debug!(
+                event = "Request",
+                phase = "Result",
+                time = prepared.timers.total_elapsed().as_micros(),
+                result = ?result.decision(),
+                policy_hash = %version.hash,
+                policy_loaded_at = %version.loaded_at,
+            );
+        }
 
         // Permit metadata is part of Allow decisions. Forbid IDs are only
         // materialized when the caller explicitly requests diagnostics. Metrics
@@ -693,7 +736,7 @@ impl PolicyEngine {
         // Record metrics (no-op when no sink is configured or feature disabled)
         #[cfg(feature = "observability")]
         {
-            if metrics_are_enabled {
+            if prepared.metrics_enabled {
                 let dur = prepared.timers.total_elapsed();
                 let allowed = result.decision() == cedar_policy::Decision::Allow;
                 let phases = EvaluationPhases {
@@ -718,7 +761,7 @@ impl PolicyEngine {
                     matched_policies,
                 );
 
-                record_evaluation_observation(&sink, &observation);
+                record_evaluation_observation(&prepared.sink, &observation);
             }
         }
 

@@ -17,11 +17,11 @@ pub(crate) fn principal_match_reason(
             Some(PolicyMatchReason::PrincipalIn)
         }
         PrincipalConstraint::Any => Some(PolicyMatchReason::PrincipalAny),
-        PrincipalConstraint::Is(entity_type) if entity_type.to_string() == principal.type_name => {
+        PrincipalConstraint::Is(entity_type) if entity_type == principal.type_name => {
             Some(PolicyMatchReason::PrincipalIs)
         }
         PrincipalConstraint::IsIn(entity_type, parent)
-            if entity_type.to_string() == principal.type_name
+            if entity_type == principal.type_name
                 && (parent == principal.uid || principal.parents.contains(&parent)) =>
         {
             Some(PolicyMatchReason::PrincipalIsIn)
@@ -46,11 +46,11 @@ pub(crate) fn resource_match_reason(
             Some(Some(PolicyMatchReason::ResourceIn))
         }
         ResourceConstraint::Any => Some(Some(PolicyMatchReason::ResourceAny)),
-        ResourceConstraint::Is(entity_type) if entity_type.to_string() == resource.type_name => {
+        ResourceConstraint::Is(entity_type) if entity_type == resource.type_name => {
             Some(Some(PolicyMatchReason::ResourceIs))
         }
         ResourceConstraint::IsIn(entity_type, parent)
-            if entity_type.to_string() == resource.type_name && parent == resource.uid =>
+            if entity_type == resource.type_name && parent == resource.uid =>
         {
             Some(Some(PolicyMatchReason::ResourceIsIn))
         }

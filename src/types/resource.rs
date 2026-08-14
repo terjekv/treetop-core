@@ -13,6 +13,7 @@ use crate::traits::CedarAtom;
 
 use super::attr_value::AttrValue;
 use super::cedar_type::CedarType;
+use super::uid_cache::EntityUidCache;
 
 pub(super) struct CedarParts {
     pub id: String,
@@ -95,6 +96,8 @@ pub struct Resource {
     /// Arbitrary attributes to attach to the resource entity
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     attrs: BTreeMap<String, AttrValue>,
+    #[serde(skip)]
+    uid_cache: EntityUidCache,
 }
 
 impl Display for Resource {
@@ -140,6 +143,7 @@ impl Resource {
             kind: kind.into(),
             id: id.into(),
             attrs: BTreeMap::new(),
+            uid_cache: EntityUidCache::default(),
         }
     }
 
@@ -181,18 +185,20 @@ impl CedarAtom for Resource {
     }
 
     fn cedar_entity_uid(&self) -> Result<EntityUid, PolicyError> {
-        if self.id.is_empty() {
-            return Err(PolicyError::InvalidFormat(
-                "resource identifier cannot be empty".to_string(),
-            ));
-        }
-        let type_name: EntityTypeName = self.kind.parse().map_err(|e| {
-            PolicyError::InvalidFormat(format!("invalid resource type '{}': {e}", self.kind))
-        })?;
-        Ok(EntityUid::from_type_name_and_id(
-            type_name,
-            EntityId::new(&self.id),
-        ))
+        self.uid_cache.get_or_build(|| {
+            if self.id.is_empty() {
+                return Err(PolicyError::InvalidFormat(
+                    "resource identifier cannot be empty".to_string(),
+                ));
+            }
+            let type_name: EntityTypeName = self.kind.parse().map_err(|e| {
+                PolicyError::InvalidFormat(format!("invalid resource type '{}': {e}", self.kind))
+            })?;
+            Ok(EntityUid::from_type_name_and_id(
+                type_name,
+                EntityId::new(&self.id),
+            ))
+        })
     }
 
     fn cedar_attr(&self) -> Result<HashMap<String, RestrictedExpression>, PolicyError> {

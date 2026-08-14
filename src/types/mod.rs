@@ -20,6 +20,7 @@ mod qualified_id;
 mod request;
 mod request_context;
 mod resource;
+mod uid_cache;
 mod user;
 mod user_policies;
 

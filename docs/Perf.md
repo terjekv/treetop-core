@@ -26,6 +26,11 @@ Keeping the complete-evaluation cases in their own target preserves the historic
 dispatch-target aggregate while distinguishing Core evaluation work from metrics
 payload construction.
 
+`bench_iai_entity_uid` covers both one-shot API helper construction and repeated
+identity access on one typed request. `bench_iai_timers` keeps enabled timing
+overhead separate from the disabled path used when neither metrics nor debug
+tracing consumes evaluation phase measurements.
+
 The `iai` target names are retained intentionally. Version 3 of the reusable
 workflow uses those stable names to compare a Gungraun head revision with an
 IAI-Callgrind base revision and preserve benchmark history.

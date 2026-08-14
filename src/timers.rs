@@ -36,6 +36,11 @@ impl<'a> PhaseTimer<'a> {
             slot,
         }
     }
+
+    /// Create a timer only when phase measurements are currently observed.
+    pub fn new_if(slot: &'a mut Duration, enabled: bool) -> Option<Self> {
+        enabled.then(|| Self::new(slot))
+    }
 }
 
 impl Drop for PhaseTimer<'_> {
@@ -69,5 +74,15 @@ mod tests {
             }
         }
         assert!(duration.as_millis() >= 15);
+    }
+
+    #[test]
+    fn disabled_phase_timer_does_not_measure() {
+        let mut duration = Duration::ZERO;
+        {
+            let _timer = PhaseTimer::new_if(&mut duration, false);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(duration, Duration::ZERO);
     }
 }

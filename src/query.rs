@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use cedar_policy::EntityUid;
+use cedar_policy::{EntityTypeName, EntityUid};
 
 use crate::error::PolicyError;
 use crate::traits::CedarAtom;
@@ -9,7 +9,7 @@ use crate::types::{Action, Principal, Resource, group_entity_uid, user_entity_ui
 #[derive(Debug)]
 pub(crate) struct PrincipalQuery {
     pub(crate) uid: EntityUid,
-    pub(crate) type_name: String,
+    pub(crate) type_name: EntityTypeName,
     pub(crate) parents: HashSet<EntityUid>,
 }
 
@@ -77,16 +77,14 @@ impl PrincipalQuery {
 #[derive(Debug)]
 pub(crate) struct ResourceQuery {
     pub(crate) uid: EntityUid,
-    pub(crate) type_name: String,
+    pub(crate) type_name: EntityTypeName,
 }
 
 impl ResourceQuery {
     pub(crate) fn from_resource(resource: &Resource) -> Result<Self, PolicyError> {
         let uid = resource.cedar_entity_uid()?;
-        Ok(Self {
-            uid,
-            type_name: resource.kind().to_string(),
-        })
+        let type_name = uid.type_name().clone();
+        Ok(Self { uid, type_name })
     }
 }
 
@@ -103,6 +101,6 @@ impl ActionQuery {
     }
 }
 
-fn entity_type_name_from_uid(uid: &EntityUid) -> String {
-    uid.type_name().to_string()
+fn entity_type_name_from_uid(uid: &EntityUid) -> EntityTypeName {
+    uid.type_name().clone()
 }
