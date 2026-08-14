@@ -112,7 +112,7 @@ jobs:
             --retry-max-time 60 \
             --connect-timeout 10 \
             --max-time 30 \
-            --header 'User-Agent: treetop-core release workflow (github.com/terjekv/treetop-core)' \
+            --header 'User-Agent: treetop-core release workflow (github.com/treetop-policy-engine/treetop-core)' \
             "https://crates.io/api/v1/crates/treetop-core/${version}")"; then
             echo "Could not determine whether treetop-core ${version} is published." >&2
             exit 1

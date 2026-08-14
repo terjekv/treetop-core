@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Move the canonical source repository and trusted release identity to the
+  `treetop-policy-engine` GitHub organization. The crate name and Rust API are unchanged.
+
 ### Added
 
 - Added borrowed `EvaluationObservation` metrics with structured action ID and namespace access, combined total and phase timings, and lazy matched-policy iteration. Existing `MetricsSink` implementations remain source-compatible through the owned `EvaluationStats` adapter.
