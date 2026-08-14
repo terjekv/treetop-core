@@ -8,7 +8,7 @@ Add the `observability` feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-treetop-core = { version = "0.0.19", features = ["observability"] }
+treetop-core = { version = "0.0.20", features = ["observability"] }
 ```
 
 Without this feature, the metrics and tracing infrastructure are not included, keeping the core library lightweight.
