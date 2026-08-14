@@ -19,6 +19,11 @@ depth, and whether observability is enabled.
 - `benches/bench_iai_*.rs` contains focused Gungraun benchmarks for internal hot
   paths.
 
+`bench_iai_metrics` also exercises complete evaluations with a disabled sink, the
+legacy owned-payload adapter, and an allocation-conscious borrowed sink. Keep these
+cases together so instruction counts distinguish Core evaluation work from metric
+payload construction.
+
 The `iai` target names are retained intentionally. Version 3 of the reusable
 workflow uses those stable names to compare a Gungraun head revision with an
 IAI-Callgrind base revision and preserve benchmark history.

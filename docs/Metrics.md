@@ -8,7 +8,7 @@ Add the `observability` feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-treetop-core = { version = "0.0.18", features = ["observability"] }
+treetop-core = { version = "0.0.19", features = ["observability"] }
 ```
 
 Without this feature, the metrics and tracing infrastructure are not included, keeping the core library lightweight.
@@ -23,14 +23,21 @@ Without this feature, the metrics and tracing infrastructure are not included, k
 
 ### MetricsSink Trait
 
-The `MetricsSink` trait has two required callbacks and two optional methods:
+The `MetricsSink` trait has two required callbacks and three optional methods:
 
-- **`on_evaluation(&self, stats: &EvaluationStats)`** – called after each policy evaluation
+- **`on_evaluation(&self, stats: &EvaluationStats)`** – receives the legacy owned evaluation payload through the default adapter
 - **`on_reload(&self, stats: &ReloadStats)`** – called after each policy reload
 - **`enabled(&self)`** – return `false` to skip metric payload allocation
-- **`on_evaluation_phases(...)`** – optionally receive per-phase timings
+- **`on_evaluation_observation(...)`** – optionally consume one borrowed, allocation-conscious evaluation observation
+- **`on_evaluation_phases(...)`** – optionally receive per-phase timings through the default adapter
 
 Callbacks run synchronously in the hot path, so implementations should be fast and non-blocking. Sink panics are isolated from authorization and reload results.
+
+Existing sinks require no changes. The default `on_evaluation_observation`
+implementation materializes `EvaluationStats`, calls `on_evaluation`, and then
+calls `on_evaluation_phases`. A sink that overrides the borrowed callback receives
+the total and phase timings together; the two legacy evaluation callbacks are not
+also invoked.
 
 ### EvaluationStats
 
@@ -46,6 +53,51 @@ pub struct EvaluationStats {
 The `matched_policies` field contains the IDs of all policies that matched during evaluation. For `Allow` decisions, this typically contains permit policies. For `Deny` decisions with forbid policies, it will contain the IDs of forbid policies.
 
 Principal and resource identifiers are intentionally omitted because they may be sensitive and high-cardinality. `action_id` is available for applications with a bounded, controlled action vocabulary; do not export request-controlled action values directly as labels. Policy IDs can also accumulate across frequent reloads. Export only bounded, allowlisted dimensions from a sink.
+
+### Allocation-Conscious Observations
+
+`EvaluationObservation` borrows the evaluated action and matching policy metadata.
+It does not format an owned Cedar action ID or collect a matched-policy vector unless
+the sink explicitly calls `to_owned_stats()`:
+
+```rust
+use std::sync::atomic::{AtomicU64, Ordering};
+use treetop_core::metrics::{
+    EvaluationObservation, EvaluationStats, MetricsSink, ReloadStats,
+};
+
+struct FastSink {
+    evaluations: AtomicU64,
+}
+
+impl MetricsSink for FastSink {
+    fn on_evaluation_observation(&self, observation: &EvaluationObservation<'_>) {
+        self.evaluations.fetch_add(1, Ordering::Relaxed);
+
+        // These are borrowed components: no Cedar formatting or reparsing.
+        let action_id = observation.action.id();
+        let namespace = observation.action.namespace();
+        let total = observation.duration;
+        let phases = &observation.phases;
+
+        // Matched IDs are lazy and allocation-free when ignored. Iterate only
+        // when the sink needs them; their borrowed order is unspecified.
+        let matched_count = observation.matched_policy_ids().count();
+
+        let _ = (action_id, namespace, total, phases, matched_count);
+    }
+
+    // Required for source compatibility with the legacy sink contract. Core
+    // does not invoke this when the borrowed callback above is overridden.
+    fn on_evaluation(&self, _stats: &EvaluationStats) {}
+
+    fn on_reload(&self, _stats: &ReloadStats) {}
+}
+```
+
+The observation cannot outlive its synchronous callback. A sink that queues or
+otherwise retains an event must call `to_owned_stats()` or copy only the bounded
+fields it needs. That makes retention and allocation an explicit sink choice.
 
 ### ReloadStats
 
@@ -255,7 +307,7 @@ struct ThreadSafeSink {
 }
 ```
 
-### 3. Keep on_evaluation() and on_reload() Fast
+### 3. Keep Evaluation and Reload Callbacks Fast
 
 These methods are called in the hot path and should not block. Avoid:
 
@@ -470,10 +522,10 @@ println!("evaluations.total:1|c");  // Immediate, stdout is buffered by OS
 ```
 
 **Q: Can I change the sink at runtime?**  
-A: Not with the current implementation. The sink is set once via `Lazy` initialization. If you need hot-swapping, wrap your sink in an `ArcSwap<dyn MetricsSink>` in your own code.
+A: Yes. `set_sink()` atomically replaces the process-wide sink. Each evaluation uses one consistent sink snapshot for its callback.
 
 **Q: What if I don't call `set_sink()`?**  
-A: The library uses a no-op sink by default, so there is zero overhead. You only pay for metrics you explicitly collect.
+A: The library uses a disabled no-op sink by default, avoiding evaluation payload allocation. Enabling the `observability` feature still includes the sink check and tracing instrumentation.
 
 **Q: Do I need to handle serialization myself?**  
 A: `EvaluationStats` and `ReloadStats` implement `serde::Serialize`, so you can easily convert them to JSON if needed.
@@ -484,6 +536,7 @@ A: Yes, both types are `Serialize`. Use `serde_json` or your preferred serialize
 ## See Also
 
 - [`MetricsSink`](https://docs.rs/treetop-core/latest/treetop_core/metrics/trait.MetricsSink.html)
+- [`EvaluationObservation`](https://docs.rs/treetop-core/latest/treetop_core/metrics/struct.EvaluationObservation.html)
 - [`EvaluationStats`](https://docs.rs/treetop-core/latest/treetop_core/metrics/struct.EvaluationStats.html)
 - [`ReloadStats`](https://docs.rs/treetop-core/latest/treetop_core/metrics/struct.ReloadStats.html)
 - [`set_sink()`](https://docs.rs/treetop-core/latest/treetop_core/fn.set_sink.html)

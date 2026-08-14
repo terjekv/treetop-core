@@ -6,7 +6,9 @@
 //! each other. Assertions also tolerate evaluations from unrelated parallel tests,
 //! because the sink is deliberately process-wide.
 
-use crate::metrics::{EvaluationPhases, EvaluationStats, MetricsSink, ReloadStats};
+use crate::metrics::{
+    EvaluationObservation, EvaluationPhases, EvaluationStats, MetricsSink, ReloadStats,
+};
 use crate::{Action, Decision, PolicyEngine, Principal, Request, Resource, User};
 #[cfg(test)]
 use serial_test::serial;
@@ -100,6 +102,39 @@ impl MetricsSink for TestMetricsSink {
             p.push(phases.clone());
         }
     }
+}
+
+type ObservedAction = (String, Vec<String>);
+
+#[derive(Clone, Default)]
+struct BorrowedTestSink {
+    observation_count: Arc<AtomicUsize>,
+    legacy_count: Arc<AtomicUsize>,
+    actions: Arc<Mutex<Vec<ObservedAction>>>,
+    matched_policies: Arc<Mutex<Vec<Vec<String>>>>,
+}
+
+impl MetricsSink for BorrowedTestSink {
+    fn on_evaluation_observation(&self, observation: &EvaluationObservation<'_>) {
+        self.observation_count.fetch_add(1, Ordering::Relaxed);
+        self.actions.lock().unwrap().push((
+            observation.action.id().to_owned(),
+            observation.action.namespace().to_vec(),
+        ));
+
+        let mut policy_ids = observation
+            .matched_policy_ids()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        policy_ids.sort();
+        self.matched_policies.lock().unwrap().push(policy_ids);
+    }
+
+    fn on_evaluation(&self, _stats: &EvaluationStats) {
+        self.legacy_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn on_reload(&self, _stats: &ReloadStats) {}
 }
 
 /// Helper to run evaluations with the engine and let metrics be automatically collected.
@@ -230,7 +265,7 @@ fn test_metrics_phase_tracking() {
         resource: Resource::new("Host", "hostname.example.com"),
     };
 
-    // This will internally call record_evaluation_phases if the sink supports it
+    // The default observation adapter dispatches the legacy phase callback.
     let result = engine.evaluate(&request);
     assert!(result.is_ok(), "Evaluation should succeed");
 
@@ -304,6 +339,70 @@ fn test_metrics_phase_tracking() {
     );
 }
 
+#[test]
+#[serial(metrics)]
+fn test_borrowed_observation_reports_action_and_lazy_policy_ids() {
+    const POLICY: &str = r#"
+        @id("allow_read_1")
+        permit(principal, action == App::Core::Action::"read", resource);
+
+        @id("allow_read_2")
+        permit(principal == User::"alice", action == App::Core::Action::"read", resource);
+
+        @id("forbid_delete")
+        forbid(principal == User::"charlie", action == App::Core::Action::"delete", resource);
+    "#;
+
+    let engine = PolicyEngine::new_from_str(POLICY).expect("policy should compile");
+    let sink = BorrowedTestSink::default();
+    crate::metrics::set_sink(Arc::new(sink.clone()));
+    let namespace = Some(vec!["App".to_string(), "Core".to_string()]);
+
+    for (user, action) in [
+        ("alice", "read"),
+        ("charlie", "delete"),
+        ("david", "unmatched"),
+    ] {
+        engine
+            .evaluate(&Request {
+                principal: Principal::User(User::new(user, None, None)),
+                action: Action::new(action, namespace.clone()),
+                resource: Resource::new("Document", "doc1"),
+            })
+            .expect("request should evaluate");
+    }
+
+    assert_eq!(sink.observation_count.load(Ordering::Relaxed), 3);
+    assert_eq!(sink.legacy_count.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        *sink.actions.lock().unwrap(),
+        vec![
+            (
+                "read".to_string(),
+                vec!["App".to_string(), "Core".to_string()]
+            ),
+            (
+                "delete".to_string(),
+                vec!["App".to_string(), "Core".to_string()]
+            ),
+            (
+                "unmatched".to_string(),
+                vec!["App".to_string(), "Core".to_string()]
+            ),
+        ]
+    );
+    assert_eq!(
+        *sink.matched_policies.lock().unwrap(),
+        vec![
+            vec!["allow_read_1".to_string(), "allow_read_2".to_string()],
+            vec!["forbid_delete".to_string()],
+            Vec::<String>::new(),
+        ]
+    );
+
+    crate::metrics::set_sink(Arc::new(TestMetricsSink::new()));
+}
+
 struct PanickingSink;
 
 impl MetricsSink for PanickingSink {
@@ -314,6 +413,18 @@ impl MetricsSink for PanickingSink {
     fn on_reload(&self, _stats: &ReloadStats) {
         panic!("metrics backends must not affect reloads");
     }
+}
+
+struct PanickingBorrowedSink;
+
+impl MetricsSink for PanickingBorrowedSink {
+    fn on_evaluation_observation(&self, _observation: &EvaluationObservation<'_>) {
+        panic!("borrowed metrics backends must not affect authorization");
+    }
+
+    fn on_evaluation(&self, _stats: &EvaluationStats) {}
+
+    fn on_reload(&self, _stats: &ReloadStats) {}
 }
 
 #[test]
@@ -331,6 +442,16 @@ fn test_panicking_metrics_sink_is_isolated_from_engine_operations() {
             resource: Resource::new("Document", "public"),
         })
         .expect("a metrics panic must not fail authorization");
+    assert!(matches!(decision, Decision::Allow { .. }));
+
+    crate::metrics::set_sink(Arc::new(PanickingBorrowedSink));
+    let decision = engine
+        .evaluate(&Request {
+            principal: Principal::User(User::new("alice", None, None)),
+            action: Action::new("read", None),
+            resource: Resource::new("Document", "public"),
+        })
+        .expect("a borrowed metrics panic must not fail authorization");
     assert!(matches!(decision, Decision::Allow { .. }));
 
     engine

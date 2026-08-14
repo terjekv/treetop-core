@@ -29,8 +29,8 @@ use tracing::info_span;
 
 #[cfg(feature = "observability")]
 use crate::metrics::{
-    EvaluationPhases, EvaluationStats, get_sink, metrics_enabled, record_evaluation_with_phases,
-    record_reload,
+    EvaluationObservation, EvaluationPhases, MatchedPolicySource, get_sink, metrics_enabled,
+    record_evaluation_observation, record_reload,
 };
 
 /// Static cached Authorizer instance (stateless, reusable across evaluations).
@@ -678,11 +678,10 @@ impl PolicyEngine {
         let metrics_are_enabled = metrics_enabled(&sink);
 
         // Permit metadata is part of Allow decisions. Forbid IDs are only
-        // materialized when diagnostics or an active metrics sink needs them.
+        // materialized when the caller explicitly requests diagnostics. Metrics
+        // borrow matching IDs from the Cedar response and compiled snapshot.
         let permit_policies = extract_permit_policies(&prepared.snapshot, &result);
         let collect_forbid_ids = include_forbid_diagnostics;
-        #[cfg(feature = "observability")]
-        let collect_forbid_ids = collect_forbid_ids || metrics_are_enabled;
         let forbid_policy_ids = if collect_forbid_ids {
             extract_forbid_policy_ids(&prepared.snapshot, &result)
         } else {
@@ -697,25 +696,29 @@ impl PolicyEngine {
             if metrics_are_enabled {
                 let dur = prepared.timers.total_elapsed();
                 let allowed = result.decision() == cedar_policy::Decision::Allow;
-                let matched_policies = match &decision {
-                    Decision::Allow { policies, .. } => policies.ids(),
-                    Decision::Deny { .. } => forbid_policy_ids.clone(),
-                };
-                let stats = EvaluationStats {
-                    duration: dur,
-                    allowed,
-                    action_id: request.action.to_string(),
-                    matched_policies,
-                };
                 let phases = EvaluationPhases {
                     apply_labels_ms: prepared.timers.labels.as_secs_f64() * 1000.0,
                     construct_entities_ms: prepared.timers.entities.as_secs_f64() * 1000.0,
                     resolve_groups_ms: prepared.timers.groups.as_secs_f64() * 1000.0,
                     authorize_ms: prepared.timers.authz.as_secs_f64() * 1000.0,
-                    total_ms: stats.duration.as_secs_f64() * 1000.0,
+                    total_ms: dur.as_secs_f64() * 1000.0,
                 };
+                let matched_policies = match &decision {
+                    Decision::Allow { policies, .. } => MatchedPolicySource::Allow(policies),
+                    Decision::Deny { .. } => MatchedPolicySource::Deny {
+                        diagnostics: result.diagnostics(),
+                        policy_ids: &prepared.snapshot.forbid_policy_ids,
+                    },
+                };
+                let observation = EvaluationObservation::new(
+                    dur,
+                    allowed,
+                    &request.action,
+                    phases,
+                    matched_policies,
+                );
 
-                record_evaluation_with_phases(&sink, &stats, &phases);
+                record_evaluation_observation(&sink, &observation);
             }
         }
 
