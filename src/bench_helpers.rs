@@ -10,13 +10,16 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::PolicyEngine;
 use crate::error::PolicyError;
 use crate::loader;
-use crate::metrics::{EvaluationPhases, EvaluationStats, MetricsSink, ReloadStats};
+use crate::metrics::{
+    EvaluationObservation, EvaluationPhases, EvaluationStats, MetricsSink, ReloadStats,
+};
 use crate::policy_match;
 use crate::query;
 use crate::timers::PhaseTimer;
-use crate::types::{AttrValue, Resource};
+use crate::types::{Action, AttrValue, Decision, Principal, Request, Resource, User};
 
 pub fn precompute_permit_policies_len(set: &cedar_policy::PolicySet) -> usize {
     loader::precompute_permit_policies(set)
@@ -212,4 +215,117 @@ pub fn metrics_record_reload(iters: usize) -> u64 {
         crate::metrics::record_reload();
     }
     METRICS_SINK.reload_count.load(Ordering::Relaxed)
+}
+
+const METRICS_EVALUATION_POLICY: &str = r#"
+    @id("allow_metrics_1")
+    permit(principal, action == App::Core::Action::"view_host", resource is Host);
+
+    @id("allow_metrics_2")
+    permit(principal == User::"target", action == App::Core::Action::"view_host", resource);
+"#;
+
+static METRICS_ENGINE: LazyLock<PolicyEngine> = LazyLock::new(|| {
+    PolicyEngine::new_from_str(METRICS_EVALUATION_POLICY)
+        .expect("metrics benchmark policy must compile")
+});
+
+static METRICS_REQUEST: LazyLock<Request> = LazyLock::new(|| Request {
+    principal: Principal::User(User::new("target", None, None)),
+    action: Action::new(
+        "view_host",
+        Some(vec!["App".to_string(), "Core".to_string()]),
+    ),
+    resource: Resource::new("Host", "web-01.example.com"),
+});
+
+struct DisabledEvaluationSink;
+
+impl MetricsSink for DisabledEvaluationSink {
+    fn enabled(&self) -> bool {
+        false
+    }
+
+    fn on_evaluation(&self, _stats: &EvaluationStats) {}
+
+    fn on_reload(&self, _stats: &ReloadStats) {}
+}
+
+#[derive(Default)]
+struct LegacyEvaluationSink {
+    score: AtomicU64,
+}
+
+impl MetricsSink for LegacyEvaluationSink {
+    fn on_evaluation(&self, stats: &EvaluationStats) {
+        let score = u64::from(stats.allowed)
+            .wrapping_add(stats.duration.as_nanos() as u64)
+            .wrapping_add(stats.action_id.len() as u64)
+            .wrapping_add(stats.matched_policies.len() as u64);
+        self.score.fetch_add(score, Ordering::Relaxed);
+    }
+
+    fn on_reload(&self, _stats: &ReloadStats) {}
+
+    fn on_evaluation_phases(&self, _stats: &EvaluationStats, phases: &EvaluationPhases) {
+        self.score
+            .fetch_add(phases.total_ms.to_bits(), Ordering::Relaxed);
+    }
+}
+
+#[derive(Default)]
+struct BorrowedEvaluationSink {
+    score: AtomicU64,
+}
+
+impl MetricsSink for BorrowedEvaluationSink {
+    fn on_evaluation_observation(&self, observation: &EvaluationObservation<'_>) {
+        let namespace_len = observation
+            .action
+            .namespace()
+            .iter()
+            .map(String::len)
+            .sum::<usize>();
+        let score = u64::from(observation.allowed)
+            .wrapping_add(observation.duration.as_nanos() as u64)
+            .wrapping_add(observation.action.id().len() as u64)
+            .wrapping_add(namespace_len as u64)
+            .wrapping_add(observation.phases.total_ms.to_bits());
+        self.score.fetch_add(score, Ordering::Relaxed);
+    }
+
+    fn on_evaluation(&self, _stats: &EvaluationStats) {}
+
+    fn on_reload(&self, _stats: &ReloadStats) {}
+}
+
+fn run_metrics_evaluations(iters: usize) -> u64 {
+    let mut score = 0u64;
+    for _ in 0..iters {
+        let decision = METRICS_ENGINE
+            .evaluate(&METRICS_REQUEST)
+            .expect("metrics benchmark request must evaluate");
+        score = score.wrapping_add(match decision {
+            Decision::Allow { policies, .. } => policies.len() as u64,
+            Decision::Deny { .. } => 0,
+        });
+    }
+    score
+}
+
+pub fn metrics_evaluate_disabled(iters: usize) -> u64 {
+    crate::metrics::set_sink(Arc::new(DisabledEvaluationSink));
+    run_metrics_evaluations(iters)
+}
+
+pub fn metrics_evaluate_legacy(iters: usize) -> u64 {
+    let sink = Arc::new(LegacyEvaluationSink::default());
+    crate::metrics::set_sink(sink.clone());
+    run_metrics_evaluations(iters).wrapping_add(sink.score.load(Ordering::Relaxed))
+}
+
+pub fn metrics_evaluate_borrowed(iters: usize) -> u64 {
+    let sink = Arc::new(BorrowedEvaluationSink::default());
+    crate::metrics::set_sink(sink.clone());
+    run_metrics_evaluations(iters).wrapping_add(sink.score.load(Ordering::Relaxed))
 }

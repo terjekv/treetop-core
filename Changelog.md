@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added borrowed `EvaluationObservation` metrics with structured action ID and namespace access, combined total and phase timings, and lazy matched-policy iteration. Existing `MetricsSink` implementations remain source-compatible through the owned `EvaluationStats` adapter.
+
+### Performance
+
+- Allocation-conscious metrics sinks can avoid formatting an owned Cedar action ID and collecting a matched-policy `Vec<String>` on every evaluation. Added end-to-end Callgrind coverage for disabled, legacy, and borrowed sink paths.
+
 ## [0.0.19] - 2026-08-11
 
 ### Security

@@ -31,6 +31,7 @@ jobs:
           {"name":"bench_iai_entity_uid","bench":"bench_iai_entity_uid","backend":"gungraun"},
           {"name":"bench_iai_attr_value","bench":"bench_iai_attr_value","backend":"gungraun"},
           {"name":"bench_iai_metrics","bench":"bench_iai_metrics","backend":"gungraun"},
+          {"name":"bench_iai_metrics_evaluation","bench":"bench_iai_metrics_evaluation","backend":"gungraun"},
           {"name":"bench_iai_timers","bench":"bench_iai_timers","backend":"gungraun"}
         ]
       feature_sets_json: >-

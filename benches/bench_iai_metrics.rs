@@ -23,7 +23,9 @@ fn iai_metrics_record_reload() -> u64 {
 
 library_benchmark_group!(
     name = bench_metrics;
-    benchmarks = iai_metrics_record_evaluation, iai_metrics_record_phases, iai_metrics_record_reload
+    benchmarks = iai_metrics_record_evaluation,
+        iai_metrics_record_phases,
+        iai_metrics_record_reload
 );
 
 main!(library_benchmark_groups = bench_metrics);

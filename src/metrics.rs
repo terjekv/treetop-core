@@ -43,6 +43,12 @@
 //! # }
 //! ```
 //!
+//! Existing implementations continue to receive owned [`EvaluationStats`]
+//! through a default adapter. Sinks on latency-sensitive paths can instead
+//! override [`MetricsSink::on_evaluation_observation`] to read structured action
+//! components, total and phase timings, and lazy matched-policy IDs without
+//! eager payload allocation.
+//!
 //! For **Prometheus**, implement a sink that records to your Prometheus client,
 //! or pipe [`tracing`] spans to OpenTelemetry.
 //!
@@ -50,9 +56,13 @@
 //! can add OTel instrumentation via `tracing-opentelemetry`.
 
 use arc_swap::{ArcSwap, Guard};
+use cedar_policy::{Diagnostics, PolicyId};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
+
+use crate::types::{Action, PermitPolicies};
 
 /// Snapshot of a policy evaluation, passed to [`MetricsSink::on_evaluation`].
 ///
@@ -147,6 +157,111 @@ impl EvaluationPhases {
     }
 }
 
+/// A borrowed, allocation-conscious view of one policy evaluation.
+///
+/// This observation is valid only for the duration of
+/// [`MetricsSink::on_evaluation_observation`]. It exposes the structured action
+/// identity and lazily iterates matched policy IDs so sinks can record bounded
+/// metrics without formatting an owned action string or collecting policy IDs.
+/// Use [`Self::to_owned_stats`] when the observation must be retained.
+pub struct EvaluationObservation<'a> {
+    /// Total wall-clock time for the evaluation.
+    pub duration: Duration,
+    /// Whether the decision was Allow (`true`) or Deny (`false`).
+    pub allowed: bool,
+    /// The evaluated action.
+    ///
+    /// Export its ID or namespace as a metric label only when the application's
+    /// action vocabulary is bounded and controlled.
+    pub action: &'a Action,
+    /// Non-overlapping phase timings from the evaluation.
+    pub phases: EvaluationPhases,
+    matched_policies: MatchedPolicySource<'a>,
+}
+
+pub(crate) enum MatchedPolicySource<'a> {
+    Allow(&'a PermitPolicies),
+    Deny {
+        diagnostics: &'a Diagnostics,
+        policy_ids: &'a HashMap<PolicyId, String>,
+    },
+}
+
+impl<'a> EvaluationObservation<'a> {
+    pub(crate) fn new(
+        duration: Duration,
+        allowed: bool,
+        action: &'a Action,
+        phases: EvaluationPhases,
+        matched_policies: MatchedPolicySource<'a>,
+    ) -> Self {
+        Self {
+            duration,
+            allowed,
+            action,
+            phases,
+            matched_policies,
+        }
+    }
+
+    /// Iterate over policy IDs that contributed to the decision.
+    ///
+    /// Iteration borrows existing decision and snapshot metadata and performs
+    /// no allocation. The order is unspecified. Deny-side IDs can repeat when
+    /// distinct Cedar policies use the same application-facing annotation ID;
+    /// [`Self::to_owned_stats`] preserves the legacy sorted, deduplicated deny
+    /// representation.
+    pub fn matched_policy_ids(&self) -> impl Iterator<Item = &str> + '_ {
+        let permit_policies = match &self.matched_policies {
+            MatchedPolicySource::Allow(policies) => Some(*policies),
+            MatchedPolicySource::Deny { .. } => None,
+        };
+        let forbid_source = match &self.matched_policies {
+            MatchedPolicySource::Allow(_) => None,
+            MatchedPolicySource::Deny {
+                diagnostics,
+                policy_ids,
+            } => Some((*diagnostics, *policy_ids)),
+        };
+
+        let permit_ids = permit_policies
+            .into_iter()
+            .flat_map(|policies| policies.iter().map(|policy| policy.id()));
+        let forbid_ids = forbid_source
+            .into_iter()
+            .flat_map(|(diagnostics, policy_ids)| {
+                diagnostics
+                    .reason()
+                    .filter_map(|id| policy_ids.get(id).map(String::as_str))
+            });
+
+        permit_ids.chain(forbid_ids)
+    }
+
+    /// Materialize the legacy owned evaluation payload.
+    ///
+    /// This formats the canonical Cedar action ID and collects matched policy
+    /// IDs. Prefer reading the borrowed fields directly on latency-sensitive
+    /// paths.
+    pub fn to_owned_stats(&self) -> EvaluationStats {
+        let mut matched_policies = self
+            .matched_policy_ids()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        matched_policies.sort();
+        if !self.allowed {
+            matched_policies.dedup();
+        }
+
+        EvaluationStats {
+            duration: self.duration,
+            allowed: self.allowed,
+            action_id: self.action.to_string(),
+            matched_policies,
+        }
+    }
+}
+
 /// Snapshot of a policy reload event, passed to [`MetricsSink::on_reload`].
 ///
 /// This struct captures the timestamp when a policy reload completed.
@@ -238,11 +353,29 @@ pub trait MetricsSink: Send + Sync {
         true
     }
 
-    /// Called after each policy evaluation with timing and decision info.
+    /// Called once after each evaluation with borrowed dimensions and timings.
     ///
-    /// This method is invoked synchronously after every call to
-    /// `PolicyEngine::evaluate`, regardless of the decision outcome.
-    /// It should return quickly to avoid blocking evaluation.
+    /// The default adapter materializes [`EvaluationStats`] and invokes
+    /// [`Self::on_evaluation`] followed by [`Self::on_evaluation_phases`], so
+    /// existing sinks retain their observations unchanged. Allocation-sensitive
+    /// sinks can override this callback, read `observation.action.id()` and
+    /// `observation.action.namespace()`, and ignore or lazily iterate matched
+    /// policy IDs.
+    ///
+    /// The observation cannot be retained beyond this synchronous callback.
+    /// Call [`EvaluationObservation::to_owned_stats`] when owned data is needed.
+    fn on_evaluation_observation(&self, observation: &EvaluationObservation<'_>) {
+        let stats = observation.to_owned_stats();
+        self.on_evaluation(&stats);
+        self.on_evaluation_phases(&stats, &observation.phases);
+    }
+
+    /// Called by the default observation adapter with owned evaluation data.
+    ///
+    /// Existing sinks can continue implementing this method unchanged. It is
+    /// not invoked automatically when a sink overrides
+    /// [`Self::on_evaluation_observation`]. It should return quickly to avoid
+    /// blocking evaluation.
     fn on_evaluation(&self, stats: &EvaluationStats);
 
     /// Called after each policy reload.
@@ -252,11 +385,12 @@ pub trait MetricsSink: Send + Sync {
     /// when the reload completed.
     fn on_reload(&self, stats: &ReloadStats);
 
-    /// Called with detailed phase-level timing information (optional).
+    /// Called by the default observation adapter with phase timings (optional).
     ///
-    /// This is an optional method for sinks that want to break down
-    /// evaluation time by phase. The default implementation does nothing.
-    /// Override this in your implementation to collect per-phase metrics.
+    /// Existing sinks can override this method to collect phase-level metrics.
+    /// It is not invoked automatically when a sink overrides
+    /// [`Self::on_evaluation_observation`], because that callback already
+    /// receives [`EvaluationObservation::phases`].
     fn on_evaluation_phases(&self, _stats: &EvaluationStats, _phases: &EvaluationPhases) {
         // Default: no-op
     }
@@ -379,6 +513,7 @@ pub(crate) fn metrics_enabled(sink: &SinkGuard) -> bool {
 }
 
 /// Dispatch related evaluation callbacks to one consistent sink snapshot.
+#[cfg(any(test, feature = "bench-internal"))]
 pub(crate) fn record_evaluation_with_phases(
     sink: &SinkGuard,
     stats: &EvaluationStats,
@@ -387,6 +522,16 @@ pub(crate) fn record_evaluation_with_phases(
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         sink.on_evaluation(stats);
         sink.on_evaluation_phases(stats, phases);
+    }));
+}
+
+/// Dispatch one borrowed evaluation observation to one sink snapshot.
+pub(crate) fn record_evaluation_observation(
+    sink: &SinkGuard,
+    observation: &EvaluationObservation<'_>,
+) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sink.on_evaluation_observation(observation);
     }));
 }
 

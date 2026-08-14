@@ -38,6 +38,16 @@ impl Action {
     pub fn without_namespace<T: Into<String>>(id: T) -> Self {
         Action::new(id, None)
     }
+
+    /// Get the raw, unescaped action identifier.
+    pub fn id(&self) -> &str {
+        self.id.id()
+    }
+
+    /// Get the action's namespace path.
+    pub fn namespace(&self) -> &[String] {
+        self.id.namespace()
+    }
 }
 
 impl CedarAtom for Action {
@@ -133,6 +143,17 @@ mod tests {
     fn test_fromstr_action_with_special_chars() {
         let action = Action::from_str(r#"Action::"create-host_v2""#).unwrap();
         assert_eq!(action.id.id(), "create-host_v2");
+    }
+
+    #[test]
+    fn exposes_borrowed_identity_components() {
+        let action = Action::new(
+            "create-host_v2",
+            Some(vec!["Infra".to_string(), "Core".to_string()]),
+        );
+
+        assert_eq!(action.id(), "create-host_v2");
+        assert_eq!(action.namespace(), ["Infra", "Core"]);
     }
 
     #[parameterized(
