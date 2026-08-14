@@ -130,6 +130,11 @@ harness = false
 required-features = ["bench-internal"]
 
 [[bench]]
+name = "bench_iai_metrics_evaluation"
+harness = false
+required-features = ["bench-internal"]
+
+[[bench]]
 name = "bench_iai_timers"
 harness = false
 required-features = ["bench-internal"]

@@ -19,9 +19,11 @@ depth, and whether observability is enabled.
 - `benches/bench_iai_*.rs` contains focused Gungraun benchmarks for internal hot
   paths.
 
-`bench_iai_metrics` also exercises complete evaluations with a disabled sink, the
-legacy owned-payload adapter, and an allocation-conscious borrowed sink. Keep these
-cases together so instruction counts distinguish Core evaluation work from metric
+`bench_iai_metrics` retains the historical focused sink-dispatch cases.
+`bench_iai_metrics_evaluation` exercises complete evaluations with a disabled
+sink, the legacy owned-payload adapter, and an allocation-conscious borrowed sink.
+Keeping the complete-evaluation cases in their own target preserves the historical
+dispatch-target aggregate while distinguishing Core evaluation work from metrics
 payload construction.
 
 The `iai` target names are retained intentionally. Version 3 of the reusable
@@ -66,7 +68,7 @@ cargo bench --bench bench_iai_query --features bench-internal
 Add `observability` to measure the enabled path:
 
 ```bash
-cargo bench --bench bench_iai_metrics \
+cargo bench --bench bench_iai_metrics_evaluation \
   --features bench-internal,observability
 ```
 
