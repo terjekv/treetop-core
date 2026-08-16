@@ -11,8 +11,8 @@ permissions:
 jobs:
   bench:
     name: PR Bench
-    # Immutable commit behind the v3 tag.
-    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@a0993c0f7cbfcb4e34c9e13dbea62176608c833c
+    # Immutable commit behind the v1.0.0 tag.
+    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@d11235d565d35aac2d9ac6fb84af7830021958e5
     with:
       backend: all
       benchmarks_json: >-
