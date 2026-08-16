@@ -12,9 +12,9 @@ jobs:
   bench:
     name: PR Bench
     # Immutable commit behind the v1.0.0 tag.
-    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@d11235d565d35aac2d9ac6fb84af7830021958e5
+    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@0343a98c94e04d326c5fbfea753fad9934eee7be
     with:
-      action_ref: d11235d565d35aac2d9ac6fb84af7830021958e5
+      action_ref: 0343a98c94e04d326c5fbfea753fad9934eee7be
       backend: all
       benchmarks_json: >-
         [
