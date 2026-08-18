@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.22] - 2026-08-18
+
 ### Added
 
 - Added a deterministic large-policy scale suite. Pull-request CI exercises
