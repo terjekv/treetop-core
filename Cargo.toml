@@ -85,6 +85,10 @@ harness = false
 name = "policy_scale_criterion"
 harness = false
 
+[[bench]]
+name = "policy_scale_probe"
+harness = false
+
 # Keep the legacy `iai` target names so v3 can pair Gungraun head results with
 # existing IAI-Callgrind base results and retain benchmark history.
 [[bench]]

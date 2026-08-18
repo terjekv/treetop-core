@@ -12,10 +12,12 @@ depth, and whether observability is enabled.
 
 The separate policy-scale suite deterministically generates mixed permit and
 forbid corpora without checking a large generated file into the repository. Pull
-requests exercise 10,000 policies as a correctness smoke test. Scheduled and
-manual scale runs default to 100,000 policies and cover parsing, strict schema
-validation, snapshot construction, reloads, evaluation, policy listing, cloning,
-and peak resident memory.
+requests exercise 10,000 policies as a correctness smoke test. Scheduled scale
+runs cover 1,000, 10,000, and 100,000 policies; manual runs default to 100,000.
+They cover parsing, strict schema validation, snapshot construction, reloads,
+evaluation, policy listing, cloning, and peak resident memory. See
+[Operating at Large Policy-Set Scale](Scale.md) for the operational consequences,
+current expectations, and initial measurements.
 
 ## Bench Files
 
@@ -29,6 +31,8 @@ and peak resident memory.
   by the integration test and Criterion benchmark.
 - `benches/policy_scale_criterion.rs` measures 100k+ policy operations outside
   Callgrind.
+- `benches/policy_scale_probe.rs` produces a concise CPU-sensitive latency and
+  phase-memory report for one configured policy count.
 
 `bench_iai_metrics` retains the historical focused sink-dispatch cases.
 `bench_iai_metrics_evaluation` exercises complete evaluations with a disabled
@@ -75,10 +79,12 @@ TREETOP_SCALE_POLICY_COUNT=100000 \
   -- --ignored --exact --nocapture
 TREETOP_SCALE_POLICY_COUNT=100000 \
   cargo bench --bench policy_scale_criterion -- --noplot
+TREETOP_SCALE_POLICY_COUNT=100000 \
+  /usr/bin/time -v cargo bench --bench policy_scale_probe
 ```
 
 Set `TREETOP_SCALE_POLICY_COUNT` to another value, such as `250000`, to probe a
-different supported scale. The default is 100,000 when the variable is absent.
+different scale. The default is 100,000 when the variable is absent.
 
 ### Gungraun
 
@@ -128,12 +134,13 @@ Gungraun regressions above 8% and Criterion median regressions above 10% fail
 the check. The workflow publishes one sticky pull-request report, so its token
 has `contents: read` and `pull-requests: write` permissions only.
 
-`.github/workflows/policy-scale.yml` runs weekly and on manual dispatch. It
-executes the ignored correctness test under `/usr/bin/time -v` so the log records
-peak RSS, then runs the Criterion scale target. The workflow accepts a
-`policy_count` input and defaults to 100,000. This target is intentionally absent
-from the pull-request Callgrind matrix because instrumentation cost grows with
-the generated corpus.
+`.github/workflows/policy-scale.yml` runs weekly across 1,000, 10,000, and 100,000
+policies. Manual dispatch can select one of those sizes or 250,000. Each job
+executes the ignored correctness test, writes the probe's latency and phase-memory
+tables plus `/usr/bin/time -v` CPU and peak-RSS data to the job summary, then runs
+the Criterion scale target. These targets are intentionally absent from the
+pull-request Callgrind matrix because instrumentation cost grows with the
+generated corpus.
 
 ## Maintenance Guidance
 

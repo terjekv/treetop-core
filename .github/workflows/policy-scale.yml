@@ -9,7 +9,12 @@ on:
         description: Number of generated Cedar policies
         required: true
         default: "100000"
-        type: string
+        type: choice
+        options:
+          - "1000"
+          - "10000"
+          - "100000"
+          - "250000"
 
 permissions:
   contents: read
@@ -20,13 +25,18 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  TREETOP_SCALE_POLICY_COUNT: ${{ inputs.policy_count || '100000' }}
 
 jobs:
   scale:
-    name: ${{ inputs.policy_count || '100000' }} policies
+    name: ${{ matrix.policy_count }} policies
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        policy_count: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('[{0}]', inputs.policy_count) || '[1000,10000,100000]') }}
+    env:
+      TREETOP_SCALE_POLICY_COUNT: ${{ matrix.policy_count }}
 
     steps:
       - name: Checkout
@@ -40,14 +50,38 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
-      - name: Compile scale test
-        run: cargo test --release --locked --all-features --test policy_scale --no-run
+      - name: Compile scale tools
+        run: |
+          cargo test --release --locked --all-features --test policy_scale --no-run
+          cargo bench --locked --bench policy_scale_probe --no-run
 
-      - name: Exercise scale corpus and record peak RSS
+      - name: Exercise scale corpus
         run: >-
-          /usr/bin/time -v cargo test --release --locked --all-features
+          cargo test --release --locked --all-features
           --test policy_scale configured_policy_scale_loads_evaluates_lists_and_reloads
           -- --ignored --exact --nocapture
+
+      - name: Probe CPU-sensitive latency and memory
+        run: |
+          /usr/bin/time -v -o policy-scale-resources.txt \
+            cargo bench --locked --bench policy_scale_probe \
+            | tee policy-scale-report.md
+          {
+            cat policy-scale-report.md
+            echo
+            echo "### Whole-process resources"
+            echo
+            echo '```text'
+            sed -n \
+              -e '/User time/p' \
+              -e '/System time/p' \
+              -e '/Percent of CPU/p' \
+              -e '/Elapsed (wall clock) time/p' \
+              -e '/Maximum resident set size/p' \
+              -e '/Swaps/p' \
+              policy-scale-resources.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Benchmark scale corpus
         run: cargo bench --locked --bench policy_scale_criterion -- --noplot
