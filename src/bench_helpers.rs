@@ -1,8 +1,11 @@
-//! Thin benchmark-only wrappers around crate-private hot paths.
+//! Benchmark-only helpers and thin wrappers around crate-private hot paths.
 //!
 //! The module is exposed only through the non-default `bench-internal` feature
 //! so benchmark targets can measure production implementations without making
 //! those internals part of the normal public API.
+
+/// Deterministic large-policy fixtures shared by Treetop benchmark suites.
+pub mod policy_scale;
 
 use cedar_policy::{PrincipalConstraint, ResourceConstraint};
 use std::sync::Arc;

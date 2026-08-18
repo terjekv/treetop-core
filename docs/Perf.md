@@ -10,6 +10,15 @@ The evaluation benchmarks use a scenario matrix that varies policy-set size,
 allow and deny paths, group cardinality, label-registry complexity, namespace
 depth, and whether observability is enabled.
 
+The separate policy-scale suite deterministically generates mixed permit and
+forbid corpora without checking a large generated file into the repository. Pull
+requests exercise 10,000 policies as a correctness smoke test. Scheduled scale
+runs cover 1,000, 10,000, and 100,000 policies; manual runs default to 100,000.
+They cover parsing, strict schema validation, snapshot construction, reloads,
+evaluation, policy listing, cloning, and peak resident memory. See
+[Operating at Large Policy-Set Scale](Scale.md) for the operational consequences,
+current expectations, and initial measurements.
+
 ## Bench Files
 
 - `benches/evaluate_common.rs` contains the shared scenario matrix and fixture
@@ -18,6 +27,19 @@ depth, and whether observability is enabled.
 - `benches/evaluate_iai_*.rs` contains the Gungraun evaluation slices.
 - `benches/bench_iai_*.rs` contains focused Gungraun benchmarks for internal hot
   paths.
+- `src/bench_helpers/policy_scale.rs` generates versioned deterministic scale
+  corpora and target requests shared by Core and downstream Treetop benchmarks
+  through the opt-in `bench-internal` feature.
+- `benches/policy_scale_criterion.rs` measures 100k+ policy operations outside
+  Callgrind.
+- `benches/policy_scale_probe.rs` produces a concise CPU-sensitive latency and
+  phase-memory report for one configured policy count.
+
+The shared fixture is deliberately exposed only with `bench-internal`, allowing
+other Treetop components to benchmark the same versioned policy and request
+semantics without making fixture generation part of the production API. See the
+cross-component measurement contract in
+[Operating at Large Policy-Set Scale](Scale.md#sharing-the-fixture-across-treetop-components).
 
 `bench_iai_metrics` retains the historical focused sink-dispatch cases.
 `bench_iai_metrics_evaluation` exercises complete evaluations with a disabled
@@ -54,6 +76,22 @@ cargo bench --bench evaluate_criterion_baseline \
 
 Replace `baseline` with `groups`, `labels`, or `namespaced` for the other
 evaluation slices.
+
+Run the 100,000-policy scale correctness test and benchmark:
+
+```bash
+TREETOP_SCALE_POLICY_COUNT=100000 \
+  cargo test --release --all-features --test policy_scale \
+  configured_policy_scale_loads_evaluates_lists_and_reloads \
+  -- --ignored --exact --nocapture
+TREETOP_SCALE_POLICY_COUNT=100000 \
+  cargo bench --features bench-internal --bench policy_scale_criterion -- --noplot
+TREETOP_SCALE_POLICY_COUNT=100000 \
+  /usr/bin/time -v cargo bench --features bench-internal --bench policy_scale_probe
+```
+
+Set `TREETOP_SCALE_POLICY_COUNT` to another value, such as `250000`, to probe a
+different scale. The default is 100,000 when the variable is absent.
 
 ### Gungraun
 
@@ -102,6 +140,14 @@ It uses these feature sets:
 Gungraun regressions above 8% and Criterion median regressions above 10% fail
 the check. The workflow publishes one sticky pull-request report, so its token
 has `contents: read` and `pull-requests: write` permissions only.
+
+`.github/workflows/policy-scale.yml` runs weekly across 1,000, 10,000, and 100,000
+policies. Manual dispatch can select one of those sizes or 250,000. Each job
+executes the ignored correctness test, writes the probe's latency and phase-memory
+tables plus `/usr/bin/time -v` CPU and peak-RSS data to the job summary, then runs
+the Criterion scale target. These targets are intentionally absent from the
+pull-request Callgrind matrix because instrumentation cost grows with the
+generated corpus.
 
 ## Maintenance Guidance
 

@@ -45,7 +45,8 @@ default = []
 # Enable metrics collection (via MetricsSink) and tracing spans for observability.
 # Consumers can integrate with OpenTelemetry, Prometheus, or any metrics backend.
 observability = []
-# Expose thin wrappers around crate-private hot paths for benchmark targets.
+# Expose shared fixtures and thin wrappers around crate-private hot paths for
+# benchmark targets.
 # This feature is not intended for production consumers.
 bench-internal = []
 
@@ -65,6 +66,11 @@ required-features = ["observability"]
 name = "opentelemetry_tracing"
 required-features = ["observability"]
 
+[[test]]
+name = "policy_scale"
+path = "tests/policy_scale.rs"
+required-features = ["bench-internal"]
+
 [[bench]]
 name = "evaluate_criterion_baseline"
 harness = false
@@ -80,6 +86,16 @@ harness = false
 [[bench]]
 name = "evaluate_criterion_namespaced"
 harness = false
+
+[[bench]]
+name = "policy_scale_criterion"
+harness = false
+required-features = ["bench-internal"]
+
+[[bench]]
+name = "policy_scale_probe"
+harness = false
+required-features = ["bench-internal"]
 
 # Keep the legacy `iai` target names so v3 can pair Gungraun head results with
 # existing IAI-Callgrind base results and retain benchmark history.
