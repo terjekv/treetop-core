@@ -10,6 +10,13 @@ The evaluation benchmarks use a scenario matrix that varies policy-set size,
 allow and deny paths, group cardinality, label-registry complexity, namespace
 depth, and whether observability is enabled.
 
+The separate policy-scale suite deterministically generates mixed permit and
+forbid corpora without checking a large generated file into the repository. Pull
+requests exercise 10,000 policies as a correctness smoke test. Scheduled and
+manual scale runs default to 100,000 policies and cover parsing, strict schema
+validation, snapshot construction, reloads, evaluation, policy listing, cloning,
+and peak resident memory.
+
 ## Bench Files
 
 - `benches/evaluate_common.rs` contains the shared scenario matrix and fixture
@@ -18,6 +25,10 @@ depth, and whether observability is enabled.
 - `benches/evaluate_iai_*.rs` contains the Gungraun evaluation slices.
 - `benches/bench_iai_*.rs` contains focused Gungraun benchmarks for internal hot
   paths.
+- `benches/policy_scale_common.rs` generates deterministic scale corpora shared
+  by the integration test and Criterion benchmark.
+- `benches/policy_scale_criterion.rs` measures 100k+ policy operations outside
+  Callgrind.
 
 `bench_iai_metrics` retains the historical focused sink-dispatch cases.
 `bench_iai_metrics_evaluation` exercises complete evaluations with a disabled
@@ -54,6 +65,20 @@ cargo bench --bench evaluate_criterion_baseline \
 
 Replace `baseline` with `groups`, `labels`, or `namespaced` for the other
 evaluation slices.
+
+Run the 100,000-policy scale correctness test and benchmark:
+
+```bash
+TREETOP_SCALE_POLICY_COUNT=100000 \
+  cargo test --release --all-features --test policy_scale \
+  configured_policy_scale_loads_evaluates_lists_and_reloads \
+  -- --ignored --exact --nocapture
+TREETOP_SCALE_POLICY_COUNT=100000 \
+  cargo bench --bench policy_scale_criterion -- --noplot
+```
+
+Set `TREETOP_SCALE_POLICY_COUNT` to another value, such as `250000`, to probe a
+different supported scale. The default is 100,000 when the variable is absent.
 
 ### Gungraun
 
@@ -102,6 +127,13 @@ It uses these feature sets:
 Gungraun regressions above 8% and Criterion median regressions above 10% fail
 the check. The workflow publishes one sticky pull-request report, so its token
 has `contents: read` and `pull-requests: write` permissions only.
+
+`.github/workflows/policy-scale.yml` runs weekly and on manual dispatch. It
+executes the ignored correctness test under `/usr/bin/time -v` so the log records
+peak RSS, then runs the Criterion scale target. The workflow accepts a
+`policy_count` input and defaults to 100,000. This target is intentionally absent
+from the pull-request Callgrind matrix because instrumentation cost grows with
+the generated corpus.
 
 ## Maintenance Guidance
 

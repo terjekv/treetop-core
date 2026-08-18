@@ -39,6 +39,14 @@ jobs:
       - name: Run tests
         run: cargo test --locked --all-features
 
+      - name: Exercise 10k-policy scale corpus
+        env:
+          TREETOP_SCALE_POLICY_COUNT: "10000"
+        run: >-
+          cargo test --locked --all-features --test policy_scale
+          configured_policy_scale_loads_evaluates_lists_and_reloads
+          -- --ignored --exact --nocapture
+
       - name: Build documentation
         run: cargo doc --locked --all-features --no-deps
 

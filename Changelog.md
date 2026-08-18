@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a deterministic large-policy scale suite. Pull-request CI exercises
+  10,000 mixed permit/forbid policies, while a weekly and manually configurable
+  workflow tests and benchmarks 100,000 policies by default, including strict
+  schema validation, reload rollback, evaluation, listing, cloning, and peak
+  resident memory.
+
 ## [0.0.21] - 2026-08-14
 
 ### Performance
