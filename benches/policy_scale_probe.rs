@@ -1,16 +1,14 @@
-#[allow(dead_code, reason = "the shared fixture also serves integration tests")]
-mod policy_scale_common;
-
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 use std::fs;
 
-use policy_scale_common::{
-    REVIEWERS_GROUP, ScaleCorpus, TARGET_DOCUMENT, TARGET_USER, configured_policy_count,
+use treetop_core::bench_helpers::policy_scale::{
+    CORPUS_VERSION, ScaleCorpus, allow_request, configured_policy_count, forbid_request,
+    group_request, no_match_request,
 };
-use treetop_core::{Action, AttrValue, PolicyEngine, Principal, Request, Resource, Schema, User};
+use treetop_core::{PolicyEngine, Schema};
 
 const PROBE_SAMPLES_ENV: &str = "TREETOP_SCALE_PROBE_SAMPLES";
 const DEFAULT_PROBE_SAMPLES: usize = 25;
@@ -24,15 +22,6 @@ struct MemorySnapshot {
 struct LatencyStats {
     median: Duration,
     p95: Duration,
-}
-
-fn request(groups: Option<Vec<String>>, action: &str) -> Request {
-    Request {
-        principal: Principal::User(User::new(TARGET_USER, groups, None)),
-        action: Action::new(action, None),
-        resource: Resource::new("Document", TARGET_DOCUMENT)
-            .with_attr("classification", AttrValue::String("public".to_string())),
-    }
 }
 
 fn configured_probe_samples() -> usize {
@@ -163,10 +152,10 @@ fn main() {
     let reload_elapsed = reload_started.elapsed();
     let reloaded_memory = memory_snapshot();
 
-    let allow_request = request(None, "read");
-    let forbid_request = request(None, "delete");
-    let group_request = request(Some(vec![REVIEWERS_GROUP.to_string()]), "review");
-    let no_match_request = request(None, "noise_00");
+    let allow_request = allow_request();
+    let forbid_request = forbid_request();
+    let group_request = group_request();
+    let no_match_request = no_match_request();
 
     let allow = measure_latency(
         || {
@@ -229,10 +218,12 @@ fn main() {
     );
     let queried_memory = memory_snapshot();
 
-    println!("## Policy scale probe: {policy_count} policies");
+    println!("## Policy scale probe: corpus v{CORPUS_VERSION}, {policy_count} policies");
     println!();
     println!(
-        "Generated two deterministic corpora of {:.2} MiB each; latency rows use {samples} samples after one warm-up operation.",
+        "Generated deterministic corpus generations {} and {} of {:.2} MiB each; latency rows use {samples} samples after one warm-up operation.",
+        corpus.generation,
+        replacement.generation,
         corpus.policy_text.len() as f64 / (1_024.0 * 1_024.0)
     );
     println!();

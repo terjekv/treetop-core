@@ -53,7 +53,7 @@ jobs:
       - name: Compile scale tools
         run: |
           cargo test --release --locked --all-features --test policy_scale --no-run
-          cargo bench --locked --bench policy_scale_probe --no-run
+          cargo bench --locked --features bench-internal --bench policy_scale_probe --no-run
 
       - name: Exercise scale corpus
         run: >-
@@ -64,7 +64,7 @@ jobs:
       - name: Probe CPU-sensitive latency and memory
         run: |
           /usr/bin/time -v -o policy-scale-resources.txt \
-            cargo bench --locked --bench policy_scale_probe \
+            cargo bench --locked --features bench-internal --bench policy_scale_probe \
             | tee policy-scale-report.md
           {
             cat policy-scale-report.md
@@ -84,4 +84,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Benchmark scale corpus
-        run: cargo bench --locked --bench policy_scale_criterion -- --noplot
+        run: >-
+          cargo bench --locked --features bench-internal
+          --bench policy_scale_criterion -- --noplot

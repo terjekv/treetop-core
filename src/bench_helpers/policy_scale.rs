@@ -1,23 +1,67 @@
+//! Deterministic large-policy fixtures shared by Treetop benchmark suites.
+//!
+//! This module is available only through the non-default `bench-internal`
+//! feature. It is intended for tests and benchmarks in this crate and in
+//! downstream Treetop components, not for production policy generation.
+
 use std::env;
 use std::fmt::Write;
 
+use crate::{Action, AttrValue, Principal, Request, Resource, User};
+
+/// Version of the generated corpus and its target request semantics.
+///
+/// Benchmark reports should record this value. Increment it when policy shape,
+/// schema shape, or one of the target requests changes in a way that makes
+/// results incomparable with earlier runs.
+pub const CORPUS_VERSION: u32 = 1;
+
+/// Policy count used by pull-request correctness coverage.
 pub const PR_SCALE_POLICY_COUNT: usize = 10_000;
+
+/// Default policy count for large scheduled and local measurements.
 pub const LARGE_SCALE_POLICY_COUNT: usize = 100_000;
+
+/// Environment variable read by [`configured_policy_count`].
 pub const POLICY_COUNT_ENV: &str = "TREETOP_SCALE_POLICY_COUNT";
+
+/// Principal ID used by the target scale requests.
 pub const TARGET_USER: &str = "scale_target";
+
+/// Resource ID used by the target scale requests.
 pub const TARGET_DOCUMENT: &str = "scale_document";
+
+/// Group ID used by [`group_request`].
 pub const REVIEWERS_GROUP: &str = "scale_reviewers";
 
 const SPECIAL_POLICY_COUNT: usize = 4;
 const NOISE_ACTION_COUNT: usize = 16;
 
+/// A deterministic Cedar policy corpus and its matching strict schema.
+///
+/// Generation `0` is the initial snapshot. A different generation changes the
+/// IDs of noise principals and policies while preserving the four target
+/// request outcomes, making it suitable for atomic-reload measurements.
+#[derive(Debug)]
 pub struct ScaleCorpus {
+    /// Complete Cedar policy text.
     pub policy_text: String,
+    /// Cedar schema text that strictly validates `policy_text`.
     pub schema_text: String,
+    /// Exact number of policies in `policy_text`.
     pub policy_count: usize,
+    /// Generation supplied to [`Self::new`].
+    pub generation: usize,
 }
 
 impl ScaleCorpus {
+    /// Generate a corpus with an exact policy count.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `policy_count` is less than four because the shared scenario
+    /// requires one allow, one permit overridden by a forbid, and one group
+    /// policy before filling the remainder with noise policies.
     pub fn new(policy_count: usize, generation: usize) -> Self {
         assert!(
             policy_count >= SPECIAL_POLICY_COUNT,
@@ -63,17 +107,56 @@ permit (
             policy_text,
             schema_text: build_schema_text(),
             policy_count,
+            generation,
         }
     }
 }
 
+/// Read the selected policy count, defaulting to 100,000.
+///
+/// # Panics
+///
+/// Panics when [`POLICY_COUNT_ENV`] is not a positive integer.
 pub fn configured_policy_count() -> usize {
     match env::var(POLICY_COUNT_ENV) {
-        Ok(raw) => raw.parse::<usize>().unwrap_or_else(|error| {
-            panic!("{POLICY_COUNT_ENV} must be a positive integer, got {raw:?}: {error}")
-        }),
+        Ok(raw) => {
+            let policy_count = raw.parse::<usize>().unwrap_or_else(|error| {
+                panic!("{POLICY_COUNT_ENV} must be a positive integer, got {raw:?}: {error}")
+            });
+            assert!(policy_count > 0, "{POLICY_COUNT_ENV} must be positive");
+            policy_count
+        }
         Err(env::VarError::NotPresent) => LARGE_SCALE_POLICY_COUNT,
         Err(error) => panic!("failed to read {POLICY_COUNT_ENV}: {error}"),
+    }
+}
+
+/// Request allowed by the exact-principal target policy.
+pub fn allow_request() -> Request {
+    request(None, "read")
+}
+
+/// Request denied because a matching forbid overrides a matching permit.
+pub fn forbid_request() -> Request {
+    request(None, "delete")
+}
+
+/// Request allowed through the shared reviewers group.
+pub fn group_request() -> Request {
+    request(Some(vec![REVIEWERS_GROUP.to_string()]), "review")
+}
+
+/// Request that matches no target or generated noise policy.
+pub fn no_match_request() -> Request {
+    request(None, "noise_00")
+}
+
+fn request(groups: Option<Vec<String>>, action: &str) -> Request {
+    Request {
+        principal: Principal::User(User::new(TARGET_USER, groups, None)),
+        action: Action::new(action, None),
+        resource: Resource::new("Document", TARGET_DOCUMENT)
+            .with_attr("classification", AttrValue::String("public".to_string())),
     }
 }
 

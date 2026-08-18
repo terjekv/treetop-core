@@ -176,18 +176,73 @@ Run the concise CPU-sensitive latency and memory probe. On Linux,
 ```bash
 TREETOP_SCALE_POLICY_COUNT=100000 \
 TREETOP_SCALE_PROBE_SAMPLES=25 \
-  /usr/bin/time -v cargo bench --locked --bench policy_scale_probe
+  /usr/bin/time -v cargo bench --locked --features bench-internal \
+  --bench policy_scale_probe
 ```
 
 Run the longer Criterion suite:
 
 ```bash
 TREETOP_SCALE_POLICY_COUNT=100000 \
-  cargo bench --locked --bench policy_scale_criterion -- --noplot
+  cargo bench --locked --features bench-internal \
+  --bench policy_scale_criterion -- --noplot
 ```
 
 The probe reads Linux `VmRSS` and `VmHWM` from `/proc/self/status`. Other
 platforms still report latency but mark phase memory as unavailable.
+
+## Sharing the Fixture Across Treetop Components
+
+Downstream benchmark suites can enable Treetop Core's non-default
+`bench-internal` feature in their development dependency and import the shared
+fixture:
+
+```rust
+use treetop_core::bench_helpers::policy_scale::{
+    CORPUS_VERSION, ScaleCorpus, allow_request, forbid_request,
+    group_request, no_match_request,
+};
+
+let initial = ScaleCorpus::new(10_000, 0);
+let replacement = ScaleCorpus::new(10_000, 1);
+let request = allow_request();
+```
+
+The feature is benchmark support, not a production API dependency. Corpus
+generation, schema shape, and the four request outcomes are versioned together
+by `CORPUS_VERSION`. Reports should include that version, the policy count and
+generation, and the exact Treetop Core revision. The corpus version must be
+incremented when a fixture change makes old and new results incomparable.
+
+This lets `treetop-rest` exercise the same policy work at several distinct
+layers without copying the generator:
+
+1. Core's direct probe establishes engine load, reload, evaluation, and memory
+   behavior for the shared input.
+2. REST's `PolicyStore` measurements add application validation, metadata,
+   cache, and state-replacement costs.
+3. In-process Actix measurements add routing, middleware, JSON handling,
+   response shaping, metrics, and batch scheduling without kernel transport.
+4. The existing ephemeral-loopback characterization adds client serialization,
+   TCP, response transfer, concurrency, and client-observed tail latency.
+
+Keep the layers separate in reports. In particular, do not subtract percentiles
+from different histograms to claim HTTP overhead. Compare matched runs side by
+side and use server-side phase metrics to attribute work.
+
+Large scale runs should complement, not replace, REST's focused Gungraun
+coverage. Callgrind is appropriate for small deterministic request-path
+regressions; scheduled release-mode probes are more practical for 10,000+
+policies. A shared REST/Core scale report should record both repository
+revisions, corpus version, policy count, response detail mode, batch size,
+concurrency, Actix worker count, Rayon thread count, CPU allocation, allocator,
+and peak RSS.
+
+Fixture ownership remains in Treetop Core because it defines the policy and
+request semantics. REST owns HTTP, middleware, serialization, batching, and
+server concurrency scenarios. Coordinating those boundaries gives both
+repositories comparable engine inputs without forcing either benchmark suite to
+hide component-specific costs.
 
 ## Performance Investigation Priorities
 

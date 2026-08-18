@@ -27,12 +27,19 @@ current expectations, and initial measurements.
 - `benches/evaluate_iai_*.rs` contains the Gungraun evaluation slices.
 - `benches/bench_iai_*.rs` contains focused Gungraun benchmarks for internal hot
   paths.
-- `benches/policy_scale_common.rs` generates deterministic scale corpora shared
-  by the integration test and Criterion benchmark.
+- `src/bench_helpers/policy_scale.rs` generates versioned deterministic scale
+  corpora and target requests shared by Core and downstream Treetop benchmarks
+  through the opt-in `bench-internal` feature.
 - `benches/policy_scale_criterion.rs` measures 100k+ policy operations outside
   Callgrind.
 - `benches/policy_scale_probe.rs` produces a concise CPU-sensitive latency and
   phase-memory report for one configured policy count.
+
+The shared fixture is deliberately exposed only with `bench-internal`, allowing
+other Treetop components to benchmark the same versioned policy and request
+semantics without making fixture generation part of the production API. See the
+cross-component measurement contract in
+[Operating at Large Policy-Set Scale](Scale.md#sharing-the-fixture-across-treetop-components).
 
 `bench_iai_metrics` retains the historical focused sink-dispatch cases.
 `bench_iai_metrics_evaluation` exercises complete evaluations with a disabled
@@ -78,9 +85,9 @@ TREETOP_SCALE_POLICY_COUNT=100000 \
   configured_policy_scale_loads_evaluates_lists_and_reloads \
   -- --ignored --exact --nocapture
 TREETOP_SCALE_POLICY_COUNT=100000 \
-  cargo bench --bench policy_scale_criterion -- --noplot
+  cargo bench --features bench-internal --bench policy_scale_criterion -- --noplot
 TREETOP_SCALE_POLICY_COUNT=100000 \
-  /usr/bin/time -v cargo bench --bench policy_scale_probe
+  /usr/bin/time -v cargo bench --features bench-internal --bench policy_scale_probe
 ```
 
 Set `TREETOP_SCALE_POLICY_COUNT` to another value, such as `250000`, to probe a

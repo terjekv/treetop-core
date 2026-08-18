@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflow tests and benchmarks a multi-size scale matrix, including strict
   schema validation, reload rollback, evaluation, listing, cloning, CPU-sensitive
   latency, and phase/peak resident memory. A new scale guide documents operational
-  consequences, expectations, and the initial 100,000-policy baseline.
+  consequences, expectations, the initial 100,000-policy baseline, and a
+  versioned opt-in fixture contract for downstream Treetop benchmarks.
 
 ## [0.0.21] - 2026-08-14
 

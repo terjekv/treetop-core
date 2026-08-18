@@ -1,26 +1,10 @@
-#[allow(
-    dead_code,
-    reason = "the shared fixture also serves the scale benchmark"
-)]
-#[path = "../benches/policy_scale_common.rs"]
-mod policy_scale_common;
-
 use std::time::Instant;
 
-use policy_scale_common::{
-    PR_SCALE_POLICY_COUNT, REVIEWERS_GROUP, ScaleCorpus, TARGET_DOCUMENT, TARGET_USER,
-    configured_policy_count,
+use treetop_core::bench_helpers::policy_scale::{
+    CORPUS_VERSION, PR_SCALE_POLICY_COUNT, ScaleCorpus, allow_request, configured_policy_count,
+    forbid_request, group_request, no_match_request,
 };
-use treetop_core::{Action, AttrValue, Decision, PolicyEngine, Principal, Request, Resource, User};
-
-fn request(user: &str, groups: Option<Vec<String>>, action: &str) -> Request {
-    Request {
-        principal: Principal::User(User::new(user, groups, None)),
-        action: Action::new(action, None),
-        resource: Resource::new("Document", TARGET_DOCUMENT)
-            .with_attr("classification", AttrValue::String("public".to_string())),
-    }
-}
+use treetop_core::{Decision, PolicyEngine};
 
 fn exercise_scale_corpus(policy_count: usize) {
     let generation_started = Instant::now();
@@ -41,13 +25,13 @@ fn exercise_scale_corpus(policy_count: usize) {
         corpus.policy_count
     );
 
-    let read_request = request(TARGET_USER, None, "read");
+    let read_request = allow_request();
     let read = engine
         .evaluate(&read_request)
         .expect("scale read request should evaluate");
     assert!(matches!(read, Decision::Allow { .. }));
 
-    let delete_request = request(TARGET_USER, None, "delete");
+    let delete_request = forbid_request();
     let delete = engine
         .evaluate_with_diagnostics(&delete_request)
         .expect("scale delete request should evaluate");
@@ -57,17 +41,13 @@ fn exercise_scale_corpus(policy_count: usize) {
         ["scale.target.delete_forbid"]
     );
 
-    let review_request = request(
-        TARGET_USER,
-        Some(vec![REVIEWERS_GROUP.to_string()]),
-        "review",
-    );
+    let review_request = group_request();
     let review = engine
         .evaluate(&review_request)
         .expect("scale group request should evaluate");
     assert!(matches!(review, Decision::Allow { .. }));
 
-    let no_match_request = request(TARGET_USER, None, "noise_00");
+    let no_match_request = no_match_request();
     let no_match = engine
         .evaluate(&no_match_request)
         .expect("scale no-match request should evaluate");
@@ -104,7 +84,7 @@ fn exercise_scale_corpus(policy_count: usize) {
     ));
 
     eprintln!(
-        "policy scale: count={policy_count}, bytes={}, generate={generation_elapsed:?}, load={load_elapsed:?}, reload={reload_elapsed:?}",
+        "policy scale: corpus_version={CORPUS_VERSION}, count={policy_count}, bytes={}, generate={generation_elapsed:?}, load={load_elapsed:?}, reload={reload_elapsed:?}",
         corpus.policy_text.len()
     );
 }
@@ -123,6 +103,35 @@ fn generated_corpus_is_deterministic_and_has_exact_policy_count() {
         PolicyEngine::new_from_str_with_cedarschema(&first.policy_text, &first.schema_text)
             .expect("small generated corpus should load");
     assert_eq!(engine.policies().unwrap().len(), first.policy_count);
+}
+
+#[test]
+fn shared_request_cases_keep_their_authorization_outcomes() {
+    let corpus = ScaleCorpus::new(128, 7);
+    let engine =
+        PolicyEngine::new_from_str_with_cedarschema(&corpus.policy_text, &corpus.schema_text)
+            .expect("shared fixture should load");
+
+    assert!(matches!(
+        engine.evaluate(&allow_request()).unwrap(),
+        Decision::Allow { .. }
+    ));
+
+    let forbid = engine.evaluate_with_diagnostics(&forbid_request()).unwrap();
+    assert!(matches!(forbid.decision, Decision::Deny { .. }));
+    assert_eq!(
+        forbid.matched_forbid_policy_ids,
+        ["scale.target.delete_forbid"]
+    );
+
+    assert!(matches!(
+        engine.evaluate(&group_request()).unwrap(),
+        Decision::Allow { .. }
+    ));
+    assert!(matches!(
+        engine.evaluate(&no_match_request()).unwrap(),
+        Decision::Deny { .. }
+    ));
 }
 
 #[test]

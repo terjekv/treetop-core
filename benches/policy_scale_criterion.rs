@@ -1,26 +1,12 @@
-#[allow(dead_code, reason = "the shared fixture also serves integration tests")]
-mod policy_scale_common;
-
 use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use policy_scale_common::{
-    REVIEWERS_GROUP, ScaleCorpus, TARGET_DOCUMENT, TARGET_USER, configured_policy_count,
+use treetop_core::bench_helpers::policy_scale::{
+    CORPUS_VERSION, ScaleCorpus, allow_request, configured_policy_count, forbid_request,
+    group_request, no_match_request,
 };
-use treetop_core::{
-    Action, AttrValue, Decision, PolicyEngine, Principal, Request, Resource, Schema, User,
-    compile_policy, compile_policy_with_schema,
-};
-
-fn request(groups: Option<Vec<String>>, action: &str) -> Request {
-    Request {
-        principal: Principal::User(User::new(TARGET_USER, groups, None)),
-        action: Action::new(action, None),
-        resource: Resource::new("Document", TARGET_DOCUMENT)
-            .with_attr("classification", AttrValue::String("public".to_string())),
-    }
-}
+use treetop_core::{Decision, PolicyEngine, Schema, compile_policy, compile_policy_with_schema};
 
 fn decision_score(decision: Decision) -> usize {
     match decision {
@@ -37,7 +23,7 @@ fn benchmark_policy_scale(c: &mut Criterion) {
         .schema_text
         .parse()
         .expect("generated benchmark schema should parse");
-    let parameter = format!("{policy_count}_policies");
+    let parameter = format!("v{CORPUS_VERSION}_{policy_count}_policies");
 
     let mut load_group = c.benchmark_group("policy_scale_load");
     load_group.throughput(Throughput::Elements(policy_count as u64));
@@ -114,10 +100,10 @@ fn benchmark_policy_scale(c: &mut Criterion) {
 
     let engine = PolicyEngine::new_from_str_with_schema(&corpus.policy_text, schema)
         .expect("evaluation benchmark corpus should load");
-    let allow_request = request(None, "read");
-    let forbid_request = request(None, "delete");
-    let group_request = request(Some(vec![REVIEWERS_GROUP.to_string()]), "review");
-    let no_match_request = request(None, "noise_00");
+    let allow_request = allow_request();
+    let forbid_request = forbid_request();
+    let group_request = group_request();
+    let no_match_request = no_match_request();
 
     let mut query_group = c.benchmark_group("policy_scale_query");
     query_group.throughput(Throughput::Elements(policy_count as u64));
